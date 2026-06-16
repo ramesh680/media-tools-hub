@@ -32,7 +32,7 @@ _settings = get_settings()
 _http_client = HttpClient(_settings.user_agent, _settings.request_timeout_seconds)
 _billboard = BillboardArtist100Service(_http_client)
 
-# Columns included in the exported workbook (no IMDb/Wikidata fields).
+# Columns included in the exported workbook.
 EXPORT_COLUMNS = [
     "Rank",
     "Artist Name",
@@ -40,8 +40,36 @@ EXPORT_COLUMNS = [
     "Peak Position",
     "Weeks on Chart",
     "Chart Date",
+    "IMDb nmcode",
+    "IMDb URL",
+    "Wikipedia URL",
     "Billboard Artist URL",
 ]
+
+
+def _enrich_imdb_and_wikipedia(rows: list[dict]) -> None:
+    """Add IMDb nmcode + URL and Wikipedia URL to each row, in place.
+
+    Both come from a single Wikidata lookup per artist: Wikidata maps a person to
+    their canonical IMDb id (property P345 -> the "nm" code) and to their English
+    Wikipedia page. This needs no local IMDb dataset, so it runs on the free tier.
+    Artists without a Wikidata match (or without those links) just get blank cells.
+    """
+    for row in rows:
+        artist = str(row.get("Artist Name", "")).strip()
+        nmcode = ""
+        wikipedia_url = ""
+        if artist:
+            try:
+                entity = _billboard._wikidata_entity_for_name(artist) or {}
+                nmcode = str(entity.get("IMDb nmcode (Wikidata P345)", "")).strip()
+                wikipedia_url = str(entity.get("Wikipedia URL", "")).strip()
+            except Exception:
+                # A single artist's lookup failing should never break the report.
+                pass
+        row["IMDb nmcode"] = nmcode
+        row["IMDb URL"] = f"https://www.imdb.com/name/{nmcode}/" if nmcode else ""
+        row["Wikipedia URL"] = wikipedia_url
 
 # A "dash" in Last Week can show up as a few different characters.
 _DASH_VALUES = {"-", "", "—", "–", "--"}
@@ -117,6 +145,10 @@ def billboard_new_entries_run(request: Request, chart_date: str = Form("")):
             status_code=404,
         )
 
+    # Enrich each artist with IMDb nmcode + URL and Wikipedia URL (via Wikidata;
+    # no local IMDb dataset needed, so this works on the free hosted tier).
+    _enrich_imdb_and_wikipedia(new_entries)
+
     # Build the Excel workbook.
     workbook = Workbook()
     sheet = workbook.active
@@ -125,7 +157,7 @@ def billboard_new_entries_run(request: Request, chart_date: str = Form("")):
     for row in new_entries:
         sheet.append([row.get(column, "") for column in EXPORT_COLUMNS])
     # Sensible column widths.
-    widths = [8, 32, 10, 14, 16, 14, 48]
+    widths = [8, 32, 10, 14, 16, 14, 16, 40, 48, 48]
     for index, width in enumerate(widths, start=1):
         sheet.column_dimensions[sheet.cell(row=1, column=index).column_letter].width = width
 

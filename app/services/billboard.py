@@ -205,6 +205,7 @@ class BillboardArtist100Service:
             "Wikidata ID": qid,
             "Wikidata URL": f"https://www.wikidata.org/wiki/{qid}",
             "Wikipedia URL": _english_wikipedia_url(entity),
+            "IMDb nmcode (Wikidata P345)": _first_url_claim(claims, "P345"),
             "Gender": self._claim_item_labels(claims, "P21"),
             "Occupations": self._claim_item_labels(claims, "P106"),
             "Birth Date": _first_time_claim(claims, "P569"),
