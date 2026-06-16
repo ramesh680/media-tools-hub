@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero-grid validator-hero-grid">
+  <article class="hero-card validator-hero-card">
+    <p class="eyebrow">Research Assistant</p>
+    <h1>Official Profile Finder</h1>
+    <p>Research companies, media titles, and public profiles with structured metadata, official links, and export-ready validation results.</p>
+  </article>
+
+  <aside class="tracking-card validator-supported-card" aria-label="Supported sources">
+    <p class="eyebrow">Supported Now</p>
+    <ul class="supported-list">
+      <li>Facebook</li>
+      <li>Instagram</li>
+      <li>YouTube</li>
+      <li>X/Twitter</li>
+      <li>TikTok</li>
+      <li>Wikipedia</li>
+      <li>IMDb</li>
+    </ul>
+  </aside>
+</section>
+
+<section class="validator-project-panel">
+  <p class="eyebrow">Workbook Sheet Validator</p>
+  <h2>Data Ops Larger Project Validation</h2>
+
+  {% if error_message %}
+    <div class="inline-error">{{ error_message }}</div>
+  {% endif %}
+
+  <p class="validator-guide">Need setup help? Open the <a href="#validator-rule-reference">validator how-to guide</a>.</p>
+
+  <form
+    class="validator-workbook-form"
+    hx-post="/excel-validator/validate"
+    hx-encoding="multipart/form-data"
+    hx-target="#validator-workspace"
+    hx-swap="outerHTML"
+    method="post"
+    enctype="multipart/form-data"
+  >
+    <div class="validator-source-grid">
+      <label class="file-picker">
+        <span>Workbook source file (.xlsx or .csv)</span>
+        <input type="file" name="workbook" accept=".xlsx,.xlsm,.csv" required>
+      </label>
+
+      <label class="field-control">
+        <span>Google Sheet URL</span>
+        <input type="url" name="google_sheet_url" placeholder="https://docs.google.com/spreadsheets/d/...">
+      </label>
+    </div>
+
+    <p class="validator-form-note">Upload your task workbook or CSV. The app applies the metadata rules to the uploaded file, returns the same row/column format with failed cells highlighted, and adds a Validation Summary sheet.</p>
+
+    <div class="validator-lower-grid">
+      <label class="field-control rules-control">
+        <span>Validation rules JSON</span>
+        <textarea name="rules_json" spellcheck="false">{{ default_rules_json }}</textarea>
+      </label>
+
+      <div class="validator-side-fields">
+        <label class="field-control">
+          <span>Run by</span>
+          <input type="text" name="run_by" placeholder="Enter your name or team name">
+        </label>
+
+        <label class="file-picker">
+          <span>Optional rules file (.json)</span>
+          <input type="file" name="rules_file" accept=".json,application/json">
+        </label>
+
+        <p>Use one source file at a time. If both rules inputs are provided, the uploaded JSON file is recorded with the run.</p>
+        <p>History captures the request IP so the last run can still be traced when the name field is blank.</p>
+
+        <button class="primary-button validator-submit-button" type="submit">Validate Workbook</button>
+      </div>
+    </div>
+  </form>
+</section>
+
+<section id="validator-workspace" class="workspace workspace-empty validator-ready-panel">
+  <h2>Ready to validate</h2>
+  <p>Start with one Excel file, CSV file, or Google Sheet reference and one rules set. The report keeps your data review focused and exportable.</p>
+</section>
+
+<section id="validator-rule-reference" class="app-panel validator-reference-panel">
+  <p class="eyebrow">Rule Reference</p>
+  <h2>Active validation rules</h2>
+  <div class="validator-rule-grid" aria-label="Required columns and lookup behavior">
+    <section>
+      <p class="eyebrow">Required Columns</p>
+      <p>title, title_category, title_sub_category, genre, primary_genre, companies, brand_set, facebook_page</p>
+    </section>
+    <section>
+      <p class="eyebrow">DAR / Competitive</p>
+      <p>DAR titles require Pristine company values and Pristine DAR Brands. Non-DAR titles require Competitive View.</p>
+    </section>
+    <section>
+      <p class="eyebrow">Movie / TV Checks</p>
+      <p>IMDb ttcode and Metacritic URL suggestions are fetched from the row title. IMDb title/name datasets and IMDb title pages drive genre, release date, ttcode, and network/distributor checks.</p>
+    </section>
+    <section>
+      <p class="eyebrow">YouTube</p>
+      <p>YouTube channel company values are checked with the configured API key when available.</p>
+    </section>
+    <section>
+      <p class="eyebrow">Wikipedia</p>
+      <p>wikipedia_url must use en.wikipedia.org/wiki and the article name must match the row title.</p>
+    </section>
+    <section>
+      <p class="eyebrow">URL Managers</p>
+      <p>url_managers must include row companies and social accounts; Unknown and Pristine Brand are ignored from companies for this check.</p>
+    </section>
+  </div>
+</section>
+
+{% include "partials/validator_history_table.html" %}
+{% endblock %}

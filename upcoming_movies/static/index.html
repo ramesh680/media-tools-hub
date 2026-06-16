@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Upcoming Release Movies</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Box Office Mojo Calendar</p>
+          <h1>Upcoming Release Movies</h1>
+        </div>
+        <div class="source-badge" id="sourceBadge">Source: Box Office Mojo</div>
+      </header>
+
+      <section class="control-band" aria-label="Date and data controls">
+        <div class="preset-row" role="group" aria-label="Date presets">
+          <button class="preset-button active" type="button" data-months="18">Next 18 months</button>
+          <button class="preset-button" type="button" data-months="6">Next 6 months</button>
+          <button class="preset-button" type="button" data-months="12">Next 12 months</button>
+        </div>
+        <form id="dateForm" class="date-grid">
+          <label>
+            <span>Start date</span>
+            <input id="startDate" name="start_date" type="date" required>
+          </label>
+          <label>
+            <span>End date</span>
+            <input id="endDate" name="end_date" type="date" required>
+          </label>
+          <button class="primary-button" type="submit">Fetch releases</button>
+          <button class="secondary-button" id="refreshButton" type="button">Refresh source</button>
+        </form>
+      </section>
+
+      <section class="summary-grid" aria-label="Summary">
+        <article class="metric">
+          <span>Total movies</span>
+          <strong id="totalMovies">0</strong>
+        </article>
+        <article class="metric">
+          <span>Wide releases</span>
+          <strong id="wideMovies">0</strong>
+        </article>
+        <article class="metric">
+          <span>Limited releases</span>
+          <strong id="limitedMovies">0</strong>
+        </article>
+        <article class="metric">
+          <span>Date span</span>
+          <strong id="dateSpan">-</strong>
+        </article>
+      </section>
+
+      <section class="filter-band" aria-label="Filters">
+        <label class="search-field">
+          <span>Search</span>
+          <input id="searchInput" type="search" placeholder="Title, tt code, distributor, cast">
+        </label>
+        <label>
+          <span>Genre</span>
+          <select id="genreFilter">
+            <option value="">All genres</option>
+          </select>
+        </label>
+        <label>
+          <span>Release scale</span>
+          <select id="scaleFilter">
+            <option value="">All scales</option>
+          </select>
+        </label>
+        <label>
+          <span>Release type</span>
+          <select id="typeFilter">
+            <option value="">All types</option>
+          </select>
+        </label>
+        <label>
+          <span>Distributor / Network</span>
+          <select id="distributorFilter">
+            <option value="">All distributors</option>
+          </select>
+        </label>
+        <button class="secondary-button" id="resetFilters" type="button">Reset filters</button>
+        <button class="secondary-button" id="exportCsv" type="button">Export CSV</button>
+      </section>
+
+      <section class="status-line" aria-live="polite">
+        <span id="statusText">Ready</span>
+        <span id="warningText"></span>
+      </section>
+
+      <section class="table-shell" aria-label="Upcoming release movies table">
+        <table>
+          <thead>
+            <tr>
+              <th>Release date</th>
+              <th>Movie and IMDb</th>
+              <th>Distributor / Network</th>
+              <th>Genre</th>
+              <th>Release type</th>
+              <th>Cast</th>
+              <th>Runtime</th>
+              <th>Links</th>
+            </tr>
+          </thead>
+          <tbody id="moviesBody"></tbody>
+        </table>
+        <div id="emptyState" class="empty-state" hidden>No upcoming release movies match the selected range and filters.</div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

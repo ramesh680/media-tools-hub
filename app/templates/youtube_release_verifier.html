@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero-grid">
+  <article class="hero-card">
+    <p class="eyebrow">YouTube Research</p>
+    <h1>Official Release Verifier</h1>
+    <p>Check movies and TV shows against YouTube Data API results and flag official-channel trailer matches with publish dates and URLs.</p>
+  </article>
+
+  <aside class="tracking-card" aria-label="YouTube verification sources">
+    <p class="eyebrow">Supported Now</p>
+    <ul>
+      <li><strong>Inputs:</strong> pasted rows, CSV, Excel</li>
+      <li><strong>Lookup:</strong> YouTube Data API v3</li>
+      <li><strong>Matching:</strong> title, trailer terms, official channel/network signals</li>
+      <li><strong>Exports:</strong> CSV and Excel</li>
+    </ul>
+  </aside>
+</section>
+
+<section class="app-panel" aria-label="YouTube release verification panel">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">Separate App</p>
+      <h2>YouTube official trailer release verification</h2>
+    </div>
+    <p>{% if youtube_api_enabled %}YouTube API key is configured.{% else %}Paste a YouTube API key below or add YOUTUBE_API_KEY to the app environment.{% endif %}</p>
+  </div>
+
+  <form class="validator-form" hx-post="/youtube-release-verifier/start" hx-target="#workspace" hx-swap="outerHTML" enctype="multipart/form-data">
+    <div class="validator-source-grid">
+      <label class="field-control">
+        <span>Bulk source file (.csv, .xlsx, .xlsm)</span>
+        <input type="file" name="bulk_file" accept=".csv,.xlsx,.xlsm">
+      </label>
+
+      <div class="field-control">
+        <span>Accepted columns / pasted format</span>
+        <p class="validator-form-note">Use columns such as title, type/category, network/distributor, release_date/year. Pasted lines can use: Title | Type | Network/Distributor | Year.</p>
+      </div>
+    </div>
+
+    <label class="field-control">
+      <span>YouTube API key {% if youtube_api_enabled %}(optional override){% else %}(required){% endif %}</span>
+      <input type="password" name="youtube_api_key" autocomplete="off" placeholder="{% if youtube_api_enabled %}Configured key will be used if this is blank{% else %}Paste YouTube Data API v3 key for this run{% endif %}">
+    </label>
+
+    <label class="field-control rules-control">
+      <span>Paste movie or TV rows</span>
+      <textarea name="bulk_text" spellcheck="false" placeholder="Example Movie | Movies | Warner Bros. Pictures | 2026&#10;Example Show | TV Shows | Netflix | 2025"></textarea>
+    </label>
+
+    <button class="primary-button validator-submit-button" type="submit">Verify Official YouTube Releases</button>
+  </form>
+</section>
+
+<section id="workspace" class="workspace workspace-empty">
+  <h2>Ready to verify YouTube releases</h2>
+  <p>Results will show confirmation status, official trailer network, YouTube publish date, channel, and URL.</p>
+</section>
+
+{% include "partials/history_table.html" %}
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero-grid">
+  <article class="hero-card">
+    <p class="eyebrow">IMDb Research</p>
+    <h1>IMDb Bulk Verification</h1>
+    <p>Verify title and talent rows against local IMDb title/name datasets and export matched ttcode or nmcode results.</p>
+  </article>
+
+  <aside class="tracking-card" aria-label="IMDb datasets">
+    <p class="eyebrow">Lookup Sources</p>
+    <ul>
+      <li><strong>Titles:</strong> title.basics.tsv.gz</li>
+      <li><strong>People:</strong> name.basics.tsv.gz</li>
+      <li><strong>Episodes:</strong> title.episode.tsv.gz remains available for TV season counts</li>
+      <li><strong>Exports:</strong> CSV and Excel</li>
+    </ul>
+  </aside>
+</section>
+
+<section class="app-panel" aria-label="IMDb verification panel">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">Separate App</p>
+      <h2>IMDb ttcode and nmcode verification</h2>
+    </div>
+    <p>Paste rows or upload a CSV/XLSX. First run may download or rebuild the local IMDb index.</p>
+  </div>
+
+  <form class="validator-form" hx-post="/imdb-verifier/start" hx-target="#workspace" hx-swap="outerHTML" enctype="multipart/form-data">
+    <div class="validator-source-grid">
+      <label class="field-control">
+        <span>Bulk source file (.csv, .xlsx, .xlsm)</span>
+        <input type="file" name="bulk_file" accept=".csv,.xlsx,.xlsm">
+      </label>
+
+      <div class="field-control">
+        <span>Accepted columns / pasted format</span>
+        <p class="validator-form-note">Use columns such as name/title, type/category, year/release_date, imdb_id/imdb_url. Pasted lines can use: Name | Type | Year | Existing Code.</p>
+      </div>
+    </div>
+
+    <label class="field-control rules-control">
+      <span>Paste bulk rows</span>
+      <textarea name="bulk_text" spellcheck="false" placeholder="Example Movie | Movies | 2026&#10;Example Show | TV Shows | 2025 | tt1234567&#10;Example Person | Talent | 1980 | nm1234567"></textarea>
+    </label>
+
+    <button class="primary-button validator-submit-button" type="submit">Verify IMDb Codes</button>
+  </form>
+</section>
+
+<section id="workspace" class="workspace workspace-empty">
+  <h2>Ready to verify IMDb data</h2>
+  <p>Results will show matched codes, code type, source metadata, mismatch status, and export links.</p>
+</section>
+
+{% include "partials/history_table.html" %}
+{% endblock %}

@@ -1,0 +1,45 @@
+{% if recent_runs %}
+<section id="history" class="history-panel" {% if oob_history %}hx-swap-oob="true"{% endif %}>
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">SQLite</p>
+      <h2>Recent tracker runs</h2>
+    </div>
+  </div>
+
+  <div class="table-wrap history-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Run</th>
+          <th scope="col">Tracker</th>
+          <th scope="col">Rows</th>
+          <th scope="col">Created</th>
+          <th scope="col">Open</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in recent_runs %}
+          <tr>
+            <td>#{{ run.run_id }}</td>
+            <td>{{ run.title }}</td>
+            <td>{{ run.row_count }}</td>
+            <td>{{ run.created_at }}</td>
+            <td>
+              <button class="link-button"
+                      type="button"
+                      hx-get="/history/{{ run.run_id }}"
+                      hx-target="#workspace"
+                      hx-swap="outerHTML">
+                View
+              </button>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% else %}
+<section id="history" {% if oob_history %}hx-swap-oob="true"{% endif %}></section>
+{% endif %}

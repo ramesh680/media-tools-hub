@@ -1,0 +1,37 @@
+<p class="eyebrow">History</p>
+<h2>Recent validator runs</h2>
+
+{% if recent_validator_runs %}
+  <div class="table-wrap history-wrap validator-history-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Date</th>
+          <th scope="col">Run By</th>
+          <th scope="col">IP</th>
+          <th scope="col">Source File</th>
+          <th scope="col">Validated File</th>
+          <th scope="col">Rows</th>
+          <th scope="col">Errors</th>
+          <th scope="col">Suggestions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in recent_validator_runs %}
+          <tr>
+            <td>{{ run.created_at }}</td>
+            <td>{{ run.run_by }}</td>
+            <td>{{ run.ip_address }}</td>
+            <td>{{ run.source_file }}</td>
+            <td>{{ run.validated_file }}</td>
+            <td>{{ run.row_count }}</td>
+            <td>{{ run.error_count }}</td>
+            <td>{{ run.suggestion_count }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state">No validator runs yet.</div>
+{% endif %}

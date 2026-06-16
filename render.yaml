@@ -1,0 +1,38 @@
+# Render Blueprint - deploys two free web services from this one repo:
+#   1) media-tools-hub        -> the landing page + Excel Validator + YouTube Release Verifier
+#   2) upcoming-release-movies -> the standalone upcoming-movies app (port 8765 locally)
+#
+# How to use: push this repo to GitHub, then in Render choose
+# "New +" -> "Blueprint" and point it at the repo. Render reads this file.
+#
+# Free instances sleep after ~15 min idle and cold-start on the next request.
+services:
+  - type: web
+    name: media-tools-hub
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: IMDB_ENABLED
+        value: "false"
+      # Secrets - set the values in the Render dashboard (sync:false = not stored in repo).
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false
+      - key: TMDB_READ_ACCESS_TOKEN
+        sync: false
+      # After the movies service is live, paste its full https URL here so the
+      # hub shows a link card for it (e.g. https://upcoming-release-movies.onrender.com).
+      - key: UPCOMING_MOVIES_URL
+        sync: false
+
+  - type: web
+    name: upcoming-release-movies
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python upcoming_movies/upcoming_release_movies_app.py --host 0.0.0.0 --port $PORT
+    healthCheckPath: /

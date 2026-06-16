@@ -1,0 +1,31 @@
+<section
+  id="validator-workspace"
+  class="workspace progress-panel validator-progress-panel"
+  hx-get="/excel-validator/progress/{{ job.job_id }}"
+  hx-trigger="load delay:1s"
+  hx-target="#validator-workspace"
+  hx-swap="outerHTML"
+>
+  <div class="workspace-heading">
+    <div>
+      <p class="eyebrow">Validation in progress</p>
+      <h2>Checking workbook rules</h2>
+    </div>
+    <span class="progress-number">{{ job.progress_percent }}%</span>
+  </div>
+
+  <div class="progress-track" aria-label="Validation progress">
+    <div class="progress-bar" style="width: {{ job.progress_percent }}%"></div>
+  </div>
+
+  <dl class="job-meta">
+    <div>
+      <dt>Status</dt>
+      <dd>{{ job.message }}</dd>
+    </div>
+    <div>
+      <dt>Job ID</dt>
+      <dd>{{ job.job_id }}</dd>
+    </div>
+  </dl>
+</section>

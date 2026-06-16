@@ -1,0 +1,114 @@
+<section id="validator-workspace" class="workspace result-panel validator-result-panel">
+  <div class="workspace-heading">
+    <div>
+      <p class="eyebrow">{{ result.sheet_count }} sheets / {{ result.row_count }} rows checked</p>
+      <h2>{{ result.filename }}</h2>
+    </div>
+    <span class="status-pill">{{ result.error_count }} errors / {{ result.suggestion_count }} suggestions</span>
+  </div>
+
+  <div class="validator-summary">
+    <div>
+      <strong>IMDb</strong>
+      <span>Dataset lookup + title page check</span>
+    </div>
+    <div>
+      <strong>Run By</strong>
+      <span>{{ result.run_by or "-" }}</span>
+    </div>
+    <div>
+      <strong>Validated File</strong>
+      <span>{{ result.validated_file or "Validation report" }}</span>
+    </div>
+  </div>
+
+  <div class="export-actions validator-export-actions" aria-label="Download validation outputs">
+    {% if result.validated_workbook_id %}
+      <a class="primary-button" href="/excel-validator/download/{{ result.validated_workbook_id }}">Download Validated Workbook</a>
+    {% endif %}
+    {% if result.export_id %}
+      <a class="secondary-button" href="/export/{{ result.export_id }}/csv">CSV Report</a>
+      <a class="secondary-button" href="/export/{{ result.export_id }}/xlsx">Excel Report</a>
+    {% endif %}
+  </div>
+
+  <p class="table-note">The validated workbook keeps the uploaded sheets, rows, and columns exactly as provided, highlights failed cells, adds comments with suggestions, and includes a Validation Summary sheet.</p>
+
+  <section class="result-section">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Workbook coverage</p>
+        <h3>Sheet summary</h3>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="validator-summary-table">
+        <thead>
+          <tr>
+            <th scope="col">Sheet</th>
+            <th scope="col">Header Row</th>
+            <th scope="col">Rows</th>
+            <th scope="col">Columns</th>
+            <th scope="col">Issues</th>
+            <th scope="col">Missing Core Columns</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sheet in result.sheet_summaries %}
+            <tr>
+              <td>{{ sheet.name }}</td>
+              <td>{{ sheet.header_row }}</td>
+              <td>{{ sheet.rows }}</td>
+              <td>{{ sheet.columns }}</td>
+              <td>{{ sheet.issues }}</td>
+              <td>{{ sheet.missing_columns|join(", ") if sheet.missing_columns else "None" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="result-section">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">{{ result.issues|length }} findings</p>
+        <h3>Validation report</h3>
+      </div>
+    </div>
+
+    {% if result.issues %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for column in result.report_columns %}
+                <th scope="col">{{ column }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for issue in result.issues[:500] %}
+              <tr>
+                {% for column in result.report_columns %}
+                  <td>
+                    {% if column == "Level" %}
+                      <span class="level-pill level-{{ issue[column] }}">{{ issue[column] }}</span>
+                    {% else %}
+                      {{ issue[column] }}
+                    {% endif %}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if result.issues|length > 500 %}
+        <p class="table-note">Showing first 500 findings. Exports include the full report.</p>
+      {% endif %}
+    {% else %}
+      <div class="empty-state">No validation issues found.</div>
+    {% endif %}
+  </section>
+</section>

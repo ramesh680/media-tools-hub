@@ -1,0 +1,27 @@
+<section id="workspace"
+         class="workspace progress-panel"
+         hx-get="/progress/{{ job.job_id }}"
+         hx-trigger="load delay:1s"
+         hx-target="#workspace"
+         hx-swap="outerHTML">
+  <div class="workspace-heading">
+    <div>
+      <p class="eyebrow">Running</p>
+      <h2>{{ job.message }}</h2>
+    </div>
+    <span class="progress-number">{{ job.progress_percent }}%</span>
+  </div>
+  <div class="progress-track" aria-label="Progress">
+    <div class="progress-bar" style="width: {{ job.progress_percent }}%"></div>
+  </div>
+  <dl class="job-meta">
+    <div>
+      <dt>Job ID</dt>
+      <dd>{{ job.job_id }}</dd>
+    </div>
+    <div>
+      <dt>Status</dt>
+      <dd>{{ job.status }}</dd>
+    </div>
+  </dl>
+</section>

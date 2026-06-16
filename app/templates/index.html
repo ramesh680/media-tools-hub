@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% macro date_window_controls(today_iso) %}
+  <fieldset class="date-controls">
+    <legend>Date window</legend>
+    <div class="range-options" role="radiogroup" aria-label="Date window">
+      <label class="range-option">
+        <input type="radio" name="date_window" value="current" checked>
+        <span>Current date</span>
+      </label>
+      <label class="range-option">
+        <input type="radio" name="date_window" value="next_7">
+        <span>Next 7 days</span>
+      </label>
+      <label class="range-option">
+        <input type="radio" name="date_window" value="one_year">
+        <span>One year</span>
+      </label>
+      <label class="range-option">
+        <input type="radio" name="date_window" value="custom">
+        <span>Custom date range</span>
+      </label>
+    </div>
+    <div class="custom-date-row">
+      <label>
+        <span>Start</span>
+        <input type="date" name="custom_start_date" value="{{ today_iso }}">
+      </label>
+      <label>
+        <span>End</span>
+        <input type="date" name="custom_end_date" value="{{ today_iso }}">
+      </label>
+    </div>
+  </fieldset>
+{% endmacro %}
+
+{% block content %}
+<section class="hero-grid">
+  <article class="hero-card">
+    <p class="eyebrow">Team Tools</p>
+    <h1>Media Data Tools Hub</h1>
+    <p>A shared home for the team's data tools. Pick a tool below to get started. Today is {{ today_iso }}.</p>
+  </article>
+
+  <aside class="tracking-card" aria-label="Available tools">
+    <p class="eyebrow">What's here</p>
+    <ul>
+      <li><strong>Excel Validator:</strong> upload a workbook and check it against your rules</li>
+      <li><strong>YouTube Release Verifier:</strong> verify titles against official YouTube channels</li>
+      <li><strong>Upcoming Release Movies:</strong> live upcoming theatrical release list</li>
+      <li><strong>Exports:</strong> CSV and Excel downloads</li>
+    </ul>
+  </aside>
+</section>
+
+<section class="app-panel" aria-label="Tools panel">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">Tools</p>
+      <h2>Choose a tool</h2>
+    </div>
+    <p>Available to the whole team. No login required.</p>
+  </div>
+
+  <section class="action-stack" aria-label="Tools">
+    <article class="action-card">
+      <p class="eyebrow">Spreadsheets</p>
+      <h3>Excel Validator</h3>
+      <p>Upload an XLSX or CSV workbook and validate it against your rules and checkpoints. Failed cells are flagged and you can download the reviewed file.</p>
+      <a class="primary-button" href="/excel-validator">Open Excel Validator</a>
+    </article>
+
+    <article class="action-card">
+      <p class="eyebrow">YouTube</p>
+      <h3>YouTube Release Verifier</h3>
+      <p>Check movie and TV title lists against official-channel trailer videos, publish dates, and URLs.</p>
+      <a class="primary-button" href="/youtube-release-verifier">Open YouTube Release Verifier</a>
+    </article>
+
+    {% if upcoming_movies_url %}
+    <article class="action-card">
+      <p class="eyebrow">Movies</p>
+      <h3>Upcoming Release Movies</h3>
+      <p>Live list of upcoming theatrical movie releases with dates and links, scraped on demand.</p>
+      <a class="primary-button" href="{{ upcoming_movies_url }}" target="_blank" rel="noopener">Open Upcoming Release Movies</a>
+    </article>
+    {% endif %}
+  </section>
+
+  {% if not imdb_enabled %}
+  <p class="panel-note">Note: the Metacritic/IMDb calendar tools (TV premiere, movie/game release calendars, TV seasons &amp; episodes, IMDb bulk verifier, Billboard) are not available on this hosted version because they require a multi-gigabyte local IMDb dataset. They run in the full local install.</p>
+  {% endif %}
+</section>
+
+<section id="workspace" class="workspace workspace-empty">
+  <h2>Pick a tool above</h2>
+  <p>Select Excel Validator or YouTube Release Verifier to begin.</p>
+</section>
+{% endblock %}

@@ -1,0 +1,67 @@
+<section id="workspace" class="workspace result-panel">
+  <div class="workspace-heading">
+    <div>
+      <p class="eyebrow">Completed{% if snapshot.run_id %} run #{{ snapshot.run_id }}{% endif %}</p>
+      <h2>{{ snapshot.title }}</h2>
+    </div>
+    <span class="status-pill">{{ snapshot.tracker_type|upper }}</span>
+  </div>
+
+  {% if snapshot.summary %}
+    <p class="summary-text">{{ snapshot.summary }}</p>
+  {% endif %}
+
+  {% for section in snapshot.sections %}
+    <section class="result-section">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">{{ section.row_count }} rows</p>
+          <h3>{{ section.title }}</h3>
+        </div>
+        <div class="export-actions" aria-label="Export {{ section.title }}">
+          <a class="secondary-button" href="/export/{{ section.export_id }}/csv">CSV</a>
+          <a class="secondary-button" href="/export/{{ section.export_id }}/xlsx">Excel</a>
+          {% if section.supports_google %}
+            <a class="secondary-button" href="/export/{{ section.export_id }}/google">Google Sheets</a>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if section.rows %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {% for column in section.columns %}
+                  <th scope="col">{{ column }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in section.rows[:200] %}
+                <tr>
+                  {% for column in section.columns %}
+                    <td>
+                      {% if column in ["Source URL", "Metacritic URL", "metacritic_url", "YouTube URL", "IMDb URL", "Wikidata URL", "Wikipedia URL", "Official Website", "Billboard Artist URL"] and row.get(column) %}
+                        <a href="{{ row.get(column) }}" target="_blank" rel="noreferrer">Open</a>
+                      {% elif column in ["ttcode", "imdb_id"] and row.get(column) %}
+                        <a href="https://www.imdb.com/title/{{ row.get(column) }}/" target="_blank" rel="noreferrer">{{ row.get(column) }}</a>
+                      {% else %}
+                        {{ row.get(column, "") }}
+                      {% endif %}
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if section.row_count > 200 %}
+          <p class="table-note">Showing first 200 rows. Exports include the full section.</p>
+        {% endif %}
+      {% else %}
+        <div class="empty-state">No rows found for this section.</div>
+      {% endif %}
+    </section>
+  {% endfor %}
+</section>
