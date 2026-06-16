@@ -354,8 +354,10 @@ class BoxOfficeMojoService:
         progress: ProgressCallback | None = None,
     ) -> dict:
         today = today or date.today()
+        # Last `lookback_days` days, excluding today: e.g. on 2026-06-16 this covers
+        # 2026-06-09 through 2026-06-15.
+        end_date = today - timedelta(days=1)
         start_date = today - timedelta(days=lookback_days)
-        end_date = today
         calendar_url = urljoin(BOX_OFFICE_MOJO_CALENDAR_URL, f"{start_date.isoformat()}/")
 
         if progress:
@@ -384,9 +386,10 @@ class BoxOfficeMojoService:
             "source_url": calendar_url,
             "summary": (
                 f"US theatrical releases from {start_date.isoformat()} through {end_date.isoformat()} "
-                f"(last {lookback_days} days), with each film's domestic opening weekend gross and opening "
-                "theater count pulled from its Box Office Mojo release page for the weekly LF update. "
-                "Very recent releases may show blank figures until Box Office Mojo posts opening numbers."
+                f"(the last {lookback_days} days, excluding today), with each film's domestic opening box "
+                "office collection and opening theater count pulled from its Box Office Mojo release page "
+                "for the weekly ListenFirst update. Very recent releases may show blank figures until Box "
+                "Office Mojo posts opening numbers. Use the CSV or Excel export above to download the table."
             ),
             "sections": [
                 {

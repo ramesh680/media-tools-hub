@@ -135,22 +135,9 @@
 
     <article class="action-card">
       <p class="eyebrow">Box Office</p>
-      <h3>Last Week's US Openings (for LF)</h3>
-      <p>One click pulls every movie released in the U.S. in the last 7 days with its opening gross, theater count, release date, and distributor &mdash; ready for the weekly Monday ListenFirst update.</p>
-      <form class="tracker-form" hx-post="/box-office-weekly-openings/start" hx-target="#workspace" hx-swap="outerHTML">
-        <button class="primary-button" type="submit">Fetch Last Week's US Openings</button>
-      </form>
-    </article>
-
-    <article class="action-card">
-      <p class="eyebrow">Box Office</p>
       <h3>Opening Box Office Lookup</h3>
-      <p>Paste movie titles (one per line) and fetch each film's domestic opening weekend gross and opening theater count from Box Office Mojo.</p>
-      <form class="tracker-form" hx-post="/box-office-opening/start" hx-target="#workspace" hx-swap="outerHTML">
-        <label class="field-control">
-          <span>Movie titles (one per line)</span>
-          <textarea name="titles" spellcheck="false" placeholder="Deadpool&#10;Top Gun: Maverick&#10;Barbie"></textarea>
-        </label>
+      <p>One click fetches every movie released in the U.S. over the last 7 days (excluding today) from Box Office Mojo, with each film's opening box office collection and theater count. Download the results as Excel or CSV for the weekly ListenFirst update.</p>
+      <form class="tracker-form" hx-post="/box-office-weekly-openings/start" hx-target="#workspace" hx-swap="outerHTML">
         <button class="primary-button" type="submit">Fetch Opening Box Office</button>
       </form>
     </article>
