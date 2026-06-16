@@ -85,10 +85,59 @@
       <a class="primary-button" href="{{ upcoming_movies_url }}" target="_blank" rel="noopener">Open Upcoming Release Movies</a>
     </article>
     {% endif %}
+
+    <article class="action-card">
+      <p class="eyebrow">TV</p>
+      <h3>TV Premiere Calendar</h3>
+      <p>Scrapes Metacritic's TV premiere calendar for the selected window and splits it into daily and ranged views.</p>
+      <form class="tracker-form" hx-post="/tv-premiere-calendar/start" hx-target="#workspace" hx-swap="outerHTML">
+        {{ date_window_controls(today_iso) }}
+        <button class="primary-button" type="submit">Fetch TV Premiere Calendar</button>
+      </form>
+    </article>
+
+    <article class="action-card">
+      <p class="eyebrow">Movies</p>
+      <h3>Movie Release Calendar</h3>
+      <p>Scrapes Metacritic's movie release calendar for the selected window.</p>
+      <form class="tracker-form" hx-post="/movie-release-calendar/start" hx-target="#workspace" hx-swap="outerHTML">
+        {{ date_window_controls(today_iso) }}
+        <button class="primary-button" type="submit">Fetch Movie Release Calendar</button>
+      </form>
+    </article>
+
+    <article class="action-card">
+      <p class="eyebrow">Games</p>
+      <h3>Game Release Calendar</h3>
+      <p>Scrapes Metacritic's game release schedule for the selected window.</p>
+      <form class="tracker-form" hx-post="/game-release-calendar/start" hx-target="#workspace" hx-swap="outerHTML">
+        {{ date_window_controls(today_iso) }}
+        <button class="primary-button" type="submit">Fetch Game Release Calendar</button>
+      </form>
+    </article>
+
+    <article class="action-card">
+      <p class="eyebrow">Box Office</p>
+      <h3>Box Office Mojo Movies</h3>
+      <p>Scrapes Box Office Mojo's US release schedule for the selected window.</p>
+      <form class="tracker-form" hx-post="/box-office-mojo-movies/start" hx-target="#workspace" hx-swap="outerHTML">
+        {{ date_window_controls(today_iso) }}
+        <button class="primary-button" type="submit">Fetch Box Office Mojo Movies</button>
+      </form>
+    </article>
+
+    <article class="action-card">
+      <p class="eyebrow">Box Office</p>
+      <h3>Release Schedule Changes</h3>
+      <p>Compares recent Box Office Mojo schedules to surface movies whose release dates have shifted.</p>
+      <form class="tracker-form" hx-post="/release-schedule-changes/start" hx-target="#workspace" hx-swap="outerHTML">
+        <button class="primary-button" type="submit">Fetch Release Schedule Changes</button>
+      </form>
+    </article>
   </section>
 
   {% if not imdb_enabled %}
-  <p class="panel-note">Note: the Metacritic/IMDb calendar tools (TV premiere, movie/game release calendars, TV seasons &amp; episodes, IMDb bulk verifier, Billboard) are not available on this hosted version because they require a multi-gigabyte local IMDb dataset. They run in the full local install.</p>
+  <p class="panel-note">Note: the release calendars above run without IMDb enrichment on this hosted version (no IMDb ttcodes, and no TV season/episode counts) because that data needs a multi-gigabyte local IMDb index. The IMDb-only tools (TV seasons &amp; episodes, IMDb bulk verifier) and full enrichment run in the local install. Calendar data is scraped live, so results depend on the source sites being reachable.</p>
   {% endif %}
 </section>
 

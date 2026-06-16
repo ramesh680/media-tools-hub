@@ -289,6 +289,13 @@ class IMDbEnrichmentService:
         if not targets:
             return snapshot
 
+        if not self.enabled:
+            # IMDb enrichment is turned off on this deployment (no local index).
+            # Return the scraped calendar as-is — the ttcode column is already
+            # present (added above) but left blank — instead of trying to build
+            # the multi-GB index, which a free host can't hold.
+            return snapshot
+
         if progress:
             progress(95, "Preparing local IMDb title/name index for ttcode lookup")
         self.ensure_index(progress=_scaled_progress(progress, 95, 97) if progress else None)
