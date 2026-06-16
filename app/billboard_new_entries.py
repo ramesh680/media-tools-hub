@@ -14,6 +14,7 @@ added here.
 from __future__ import annotations
 
 import io
+import sys
 from datetime import date
 
 from fastapi import APIRouter, Form, Request
@@ -64,9 +65,15 @@ def _enrich_imdb_and_wikipedia(rows: list[dict]) -> None:
                 entity = _billboard._wikidata_entity_for_name(artist) or {}
                 nmcode = str(entity.get("IMDb nmcode (Wikidata P345)", "")).strip()
                 wikipedia_url = str(entity.get("Wikipedia URL", "")).strip()
-            except Exception:
-                # A single artist's lookup failing should never break the report.
-                pass
+            except Exception as exc:  # noqa: BLE001
+                # A single artist's lookup failing should never break the report,
+                # but log it so empty cells aren't a silent mystery (visible in Render logs).
+                print(
+                    f"[billboard-new-entries] Wikidata lookup failed for {artist!r}: "
+                    f"{type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
         row["IMDb nmcode"] = nmcode
         row["IMDb URL"] = f"https://www.imdb.com/name/{nmcode}/" if nmcode else ""
         row["Wikipedia URL"] = wikipedia_url

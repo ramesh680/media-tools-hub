@@ -16,6 +16,12 @@ from app.services.imdb import IMDbEnrichmentService, normalize_title
 
 BILLBOARD_ARTIST_100_URL = "https://www.billboard.com/charts/artist-100/"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
+# Wikimedia's User-Agent policy requires a descriptive UA with contact info.
+# A generic browser UA (what the scraper uses for billboard.com) is often
+# rejected with HTTP 403 by Wikimedia APIs, especially from cloud/datacenter IPs.
+WIKIDATA_USER_AGENT = (
+    "media-tools-hub/1.0 (internal team tool; contact ramesh@listenfirstmedia.com) python-requests"
+)
 STAT_TOKEN_RE = re.compile(r"^(?:\d+|-|NEW|RE-ENTRY|RE ENTRY|RE- ENTRY)$", re.IGNORECASE)
 MUSIC_DESCRIPTION_TERMS = {
     "artist",
@@ -269,6 +275,9 @@ class BillboardArtist100Service:
             params=params,
             timeout=self.http_client.timeout_seconds,
             allow_redirects=True,
+            # Override the browser UA with a Wikimedia-policy-compliant one, and
+            # ask for JSON. Without this, Wikimedia often returns 403 to servers.
+            headers={"User-Agent": WIKIDATA_USER_AGENT, "Accept": "application/json"},
         )
         response.raise_for_status()
         return response.json()
