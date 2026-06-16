@@ -429,6 +429,38 @@ async def start_box_office_mojo_movies(request: Request) -> HTMLResponse:
     return _progress_response(request, job.to_dict())
 
 
+@app.post("/box-office-opening/start", response_class=HTMLResponse)
+async def start_box_office_opening(request: Request) -> HTMLResponse:
+    form = _decode_urlencoded_form(await request.body())
+    titles_text = form.get("titles", "")
+    if not titles_text.strip():
+        return _error_response(
+            request,
+            "No titles provided",
+            "Enter at least one movie title (one per line) to look up its opening box office.",
+        )
+    job = job_manager.start(
+        "boxoffice_opening",
+        lambda progress: box_office_service.fetch_opening_box_office(
+            titles_text=titles_text,
+            progress=progress,
+        ),
+    )
+    return _progress_response(request, job.to_dict())
+
+
+@app.post("/box-office-weekly-openings/start", response_class=HTMLResponse)
+async def start_box_office_weekly_openings(request: Request) -> HTMLResponse:
+    job = job_manager.start(
+        "boxoffice_recent_opening",
+        lambda progress: box_office_service.fetch_recent_us_opening(
+            lookback_days=7,
+            progress=progress,
+        ),
+    )
+    return _progress_response(request, job.to_dict())
+
+
 @app.post("/release-schedule-changes/start", response_class=HTMLResponse)
 async def start_release_schedule_changes(request: Request) -> HTMLResponse:
     today = date.today()

@@ -76,6 +76,27 @@ BOX_OFFICE_RELEASE_DATE_CHANGE_COLUMNS = [
     "Release Date Change",
 ]
 
+BOX_OFFICE_OPENING_COLUMNS = [
+    "Input Title",
+    "Matched Title",
+    "Year",
+    "Opening Gross",
+    "Opening Theaters",
+    "Widest Release Theaters",
+    "Domestic Total Gross",
+    "Source URL",
+    "Lookup Note",
+]
+
+BOX_OFFICE_RECENT_OPENING_COLUMNS = [
+    "Title Name",
+    "Distributor",
+    "Release Date",
+    "Opening Gross",
+    "Opening Theaters",
+    "Source URL",
+]
+
 BILLBOARD_ARTIST_100_COLUMNS = [
     "Rank",
     "Artist Name",
@@ -156,6 +177,8 @@ TRACKER_TITLES = {
     "game": "Game Release Calendar",
     "movie": "Movie Release Calendar",
     "boxoffice": "Box Office Mojo US Movie Releases",
+    "boxoffice_opening": "Box Office Mojo Opening Weekend Lookup",
+    "boxoffice_recent_opening": "Last Week's US Box Office Openings",
     "release_schedule_changes": "Release Schedule Changes",
     "imdb_verifier": "IMDb Bulk Verification",
     "billboard_artist_100": "Billboard Artist 100",

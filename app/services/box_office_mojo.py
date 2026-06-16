@@ -2,17 +2,26 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import Any, Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
+import json
 import re
 
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 
-from app.models import BOX_OFFICE_COLUMNS, BOX_OFFICE_RELEASE_DATE_CHANGE_COLUMNS, utc_now_iso
+from app.models import (
+    BOX_OFFICE_COLUMNS,
+    BOX_OFFICE_OPENING_COLUMNS,
+    BOX_OFFICE_RECENT_OPENING_COLUMNS,
+    BOX_OFFICE_RELEASE_DATE_CHANGE_COLUMNS,
+    utc_now_iso,
+)
 from app.services.http_client import HttpClient
 
 
 BOX_OFFICE_MOJO_CALENDAR_URL = "https://www.boxofficemojo.com/calendar/"
+BOX_OFFICE_MOJO_TITLE_URL = "https://www.boxofficemojo.com/title/"
+IMDB_SUGGESTION_URL = "https://v2.sg.media-imdb.com/suggestion/{first}/{query}.json"
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -214,6 +223,207 @@ class BoxOfficeMojoService:
             row["Genre"] = _clean_text(detail_genres)
         return row
 
+    def fetch_opening_box_office(
+        self,
+        titles_text: str,
+        progress: ProgressCallback | None = None,
+    ) -> dict:
+        titles = _parse_title_lines(titles_text)
+        if not titles:
+            raise ValueError("Enter at least one movie title, one per line.")
+
+        if progress:
+            progress(5, "Looking up movie titles on Box Office Mojo")
+
+        rows: list[dict[str, str]] = []
+        total = len(titles)
+        for index, title in enumerate(titles, start=1):
+            if progress:
+                percent = 5 + int((index / total) * 88)
+                progress(min(percent, 93), f"Fetching opening box office for {title}")
+            rows.append(self.lookup_opening_for_title(title))
+
+        if progress:
+            progress(95, "Preparing opening weekend snapshot")
+
+        return {
+            "tracker_type": "boxoffice_opening",
+            "title": "Box Office Mojo Opening Weekend Lookup",
+            "created_at": utc_now_iso(),
+            "source_url": BOX_OFFICE_MOJO_TITLE_URL,
+            "summary": (
+                f"Looked up {total} movie title(s) on Box Office Mojo and pulled the domestic opening "
+                "weekend gross and the opening theater count for each. Titles are matched to Box Office "
+                "Mojo pages by IMDb title search, so verify the Matched Title and read the Lookup Note."
+            ),
+            "sections": [
+                {
+                    "key": "boxoffice_opening",
+                    "title": "Opening Weekend Gross & Theater Count",
+                    "columns": BOX_OFFICE_OPENING_COLUMNS,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "supports_google": True,
+                }
+            ],
+        }
+
+    def lookup_opening_for_title(self, title: str) -> dict[str, str]:
+        row = {column: "" for column in BOX_OFFICE_OPENING_COLUMNS}
+        row["Input Title"] = title
+
+        try:
+            match = self._best_movie_match(title)
+        except Exception as exc:
+            row["Lookup Note"] = f"IMDb title search failed: {exc}"
+            return row
+
+        if not match:
+            row["Lookup Note"] = "No matching movie found on IMDb title search."
+            return row
+
+        ttcode = match.get("id", "")
+        row["Matched Title"] = _clean_text(str(match.get("l", "")))
+        row["Year"] = str(match.get("y", "") or "")
+        title_url = urljoin(BOX_OFFICE_MOJO_TITLE_URL, f"{ttcode}/")
+        row["Source URL"] = title_url
+
+        try:
+            html = self.http_client.get_text(title_url)
+        except Exception as exc:
+            row["Lookup Note"] = f"Box Office Mojo page fetch failed: {exc}"
+            return row
+
+        soup = BeautifulSoup(html, "html.parser")
+        row["Domestic Total Gross"] = _extract_domestic_total(soup)
+        release_url = _domestic_release_url(soup)
+
+        # The title page only lists the opening gross; the release page also lists
+        # the opening theater count and widest release, so prefer it when available.
+        if release_url:
+            row["Source URL"] = release_url
+            try:
+                release_html = self.http_client.get_text(release_url)
+            except Exception as exc:
+                row["Lookup Note"] = f"Release page fetch failed: {exc}"
+                opening_detail = _extract_detail_value(soup, "Domestic Opening")
+                row["Opening Gross"] = _parse_money(opening_detail)
+                return row
+            release_soup = BeautifulSoup(release_html, "html.parser")
+            opening_detail = _extract_detail_value(release_soup, "Opening")
+            row["Opening Gross"] = _parse_money(opening_detail)
+            row["Opening Theaters"] = _parse_theaters(opening_detail)
+            row["Widest Release Theaters"] = _parse_theaters(
+                _extract_detail_value(release_soup, "Widest Release")
+            )
+            if not row["Domestic Total Gross"]:
+                row["Domestic Total Gross"] = _extract_domestic_total(release_soup)
+        else:
+            opening_detail = _extract_detail_value(soup, "Domestic Opening")
+            row["Opening Gross"] = _parse_money(opening_detail)
+
+        if not row["Opening Gross"] and not row["Opening Theaters"]:
+            row["Lookup Note"] = "Matched a Box Office Mojo page, but no domestic opening figures were listed."
+        else:
+            row["Lookup Note"] = "OK"
+        return row
+
+    def _best_movie_match(self, title: str) -> dict[str, Any] | None:
+        suggestions = self._imdb_suggestions(title)
+        movies = [item for item in suggestions if str(item.get("qid", "")) == "movie" and item.get("id")]
+        if movies:
+            return movies[0]
+        for item in suggestions:
+            if item.get("id"):
+                return item
+        return None
+
+    def _imdb_suggestions(self, title: str) -> list[dict[str, Any]]:
+        normalized = re.sub(r"\s+", "_", title.strip())
+        first = next((char for char in title.strip().lower() if char.isalnum()), "x")
+        url = IMDB_SUGGESTION_URL.format(first=first, query=quote(normalized))
+        payload = self.http_client.get_text(url)
+        data = json.loads(payload)
+        results = data.get("d", [])
+        return [item for item in results if isinstance(item, dict)]
+
+    def fetch_recent_us_opening(
+        self,
+        today: date | None = None,
+        lookback_days: int = 7,
+        progress: ProgressCallback | None = None,
+    ) -> dict:
+        today = today or date.today()
+        start_date = today - timedelta(days=lookback_days)
+        end_date = today
+        calendar_url = urljoin(BOX_OFFICE_MOJO_CALENDAR_URL, f"{start_date.isoformat()}/")
+
+        if progress:
+            progress(8, "Fetching Box Office Mojo schedule for the last week of US releases")
+        html = self.http_client.get_text(calendar_url)
+        if progress:
+            progress(25, "Parsing US movie releases from the last 7 days")
+        calendar_rows = self.parse_calendar(html, start_date=start_date, end_date=end_date)
+
+        total = max(len(calendar_rows), 1)
+        rows: list[dict[str, str]] = []
+        for index, calendar_row in enumerate(calendar_rows, start=1):
+            if progress:
+                percent = 25 + int((index / total) * 60)
+                progress(min(percent, 85), f"Fetching opening gross & theaters for {calendar_row['Title Name']}")
+            rows.append(self._recent_opening_row(calendar_row))
+
+        rows.sort(key=lambda item: (item["Release Date"], item["Title Name"].lower()))
+        if progress:
+            progress(92, "Preparing opening collections snapshot for LF update")
+
+        return {
+            "tracker_type": "boxoffice_recent_opening",
+            "title": "Last Week's US Box Office Openings",
+            "created_at": utc_now_iso(),
+            "source_url": calendar_url,
+            "summary": (
+                f"US theatrical releases from {start_date.isoformat()} through {end_date.isoformat()} "
+                f"(last {lookback_days} days), with each film's domestic opening weekend gross and opening "
+                "theater count pulled from its Box Office Mojo release page for the weekly LF update. "
+                "Very recent releases may show blank figures until Box Office Mojo posts opening numbers."
+            ),
+            "sections": [
+                {
+                    "key": "boxoffice_recent_opening",
+                    "title": "Opening Collections & Theater Counts (Last 7 Days)",
+                    "columns": BOX_OFFICE_RECENT_OPENING_COLUMNS,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "supports_google": True,
+                }
+            ],
+        }
+
+    def _recent_opening_row(self, calendar_row: dict[str, str]) -> dict[str, str]:
+        row = {
+            "Title Name": calendar_row.get("Title Name", ""),
+            "Distributor": calendar_row.get("Distributor", ""),
+            "Release Date": calendar_row.get("Release Date", ""),
+            "Opening Gross": "",
+            "Opening Theaters": "",
+            "Source URL": calendar_row.get("Source URL", ""),
+        }
+        source_url = row["Source URL"]
+        if not source_url:
+            return row
+        try:
+            html = self.http_client.get_text(source_url)
+        except Exception:
+            return row
+        soup = BeautifulSoup(html, "html.parser")
+        opening_detail = _extract_detail_value(soup, "Opening")
+        row["Opening Gross"] = _parse_money(opening_detail)
+        row["Opening Theaters"] = _parse_theaters(opening_detail)
+        if not row["Opening Theaters"]:
+            row["Opening Theaters"] = _parse_theaters(_extract_detail_value(soup, "Widest Release"))
+        return row
+
 
 def _first_release_link(cell):
     for anchor in cell.find_all("a"):
@@ -259,6 +469,46 @@ def _extract_detail_value(soup: BeautifulSoup, label: str) -> str:
     text = _clean_text(container.get_text(" ", strip=True) if container else parent.get_text(" ", strip=True))
     text = re.sub(rf"^{re.escape(label)}\s*", "", text, flags=re.IGNORECASE)
     return _clean_text(text)
+
+
+def _parse_title_lines(text: str) -> list[str]:
+    titles: list[str] = []
+    seen: set[str] = set()
+    for raw_line in (text or "").splitlines():
+        for part in raw_line.split(","):
+            cleaned = _clean_text(part)
+            key = cleaned.lower()
+            if cleaned and key not in seen:
+                seen.add(key)
+                titles.append(cleaned)
+    return titles
+
+
+def _parse_money(text: str) -> str:
+    match = re.search(r"\$[\d,]+(?:\.\d+)?", text or "")
+    return match.group(0) if match else ""
+
+
+def _parse_theaters(text: str) -> str:
+    match = re.search(r"([\d,]+)\s*theaters?", text or "", flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _domestic_release_url(soup: BeautifulSoup) -> str:
+    for anchor in soup.find_all("a"):
+        href = anchor.get("href", "") or ""
+        if re.search(r"/release/rl\d+", href):
+            return urljoin(BOX_OFFICE_MOJO_TITLE_URL, href.split("?")[0])
+    return ""
+
+
+def _extract_domestic_total(soup: BeautifulSoup) -> str:
+    node = soup.find(string=lambda value: bool(value and _clean_text(value).startswith("Domestic")))
+    if not node:
+        return ""
+    container = node.parent.parent if node.parent else None
+    text = _clean_text(container.get_text(" ", strip=True)) if container else _clean_text(str(node))
+    return _parse_money(text)
 
 
 def _try_parse_release_date(value: str) -> date | None:
