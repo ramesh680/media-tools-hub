@@ -56,6 +56,11 @@ app = FastAPI(title=settings.app_name)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
+# Billboard Artist 100 "new entries" (LW = dash) section -> /billboard-new-entries
+from app.billboard_new_entries import router as billboard_new_entries_router  # noqa: E402
+
+app.include_router(billboard_new_entries_router)
+
 RELEASE_SCHEDULE_CHANGE_HISTORY_LOOKBACK_DAYS = 14
 RELEASE_SCHEDULE_CHANGE_PAST_DAYS = 7
 RELEASE_SCHEDULE_CHANGE_FUTURE_DAYS = 30

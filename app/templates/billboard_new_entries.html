@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero-grid">
+  <article class="hero-card">
+    <p class="eyebrow">Billboard</p>
+    <h1>Artist 100 - New Entries (LW = "-")</h1>
+    <p>Scrapes the Billboard Artist 100 chart and gives you an Excel file of just the artists whose <strong>Last Week (LW)</strong> value is a dash "-" - i.e. acts that are new to the chart or re-entering with no prior-week position.</p>
+  </article>
+
+  <aside class="tracking-card" aria-label="How it works">
+    <p class="eyebrow">How it works</p>
+    <ul>
+      <li>Leave the date blank for the latest chart.</li>
+      <li>Or pick any date - Billboard serves that week's chart.</li>
+      <li>You get an <strong>.xlsx</strong> download: Rank, Artist, LW, Peak, Weeks, Chart Date, URL.</li>
+    </ul>
+  </aside>
+</section>
+
+<section class="app-panel" aria-label="Billboard new entries">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">Billboard</p>
+      <h2>Generate the new-entries report</h2>
+    </div>
+    <p>Today is {{ today_iso }}.</p>
+  </div>
+
+  {% if error_message %}
+  <p class="panel-note" role="alert">{{ error_message }}</p>
+  {% endif %}
+
+  <section class="action-stack">
+    <article class="action-card">
+      <h3>Choose a chart date (optional)</h3>
+      <p>Billboard charts are weekly. Pick a date for that week, or leave blank for the most recent chart.</p>
+      <form class="tracker-form" method="post" action="/billboard-new-entries">
+        <fieldset class="date-controls">
+          <legend>Chart date</legend>
+          <label>
+            <span>Date (YYYY-MM-DD)</span>
+            <input type="date" name="chart_date" value="">
+          </label>
+        </fieldset>
+        <button class="primary-button" type="submit">Download Excel (LW = "-")</button>
+      </form>
+    </article>
+  </section>
+
+  <p class="panel-note">The chart is scraped live from billboard.com. If it occasionally fails, the site is blocking the cloud server - try again shortly. <a href="/">Back to all tools</a>.</p>
+</section>
+{% endblock %}
