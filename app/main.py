@@ -34,7 +34,13 @@ history_repository = HistoryRepository(settings.database_path)
 validator_history_repository = ValidatorHistoryRepository(settings.database_path)
 http_client = HttpClient(settings.user_agent, settings.request_timeout_seconds)
 metacritic_parser = MetacriticParser(http_client)
-imdb_service = IMDbEnrichmentService(settings.imdb_cache_dir, settings.imdb_dataset_max_age_days, http_client)
+imdb_service = IMDbEnrichmentService(
+    settings.imdb_cache_dir,
+    settings.imdb_dataset_max_age_days,
+    http_client,
+    settings.tmdb_api_key,
+    settings.tmdb_read_access_token,
+)
 imdb_verifier_service = IMDbBulkVerifierService(imdb_service)
 box_office_service = BoxOfficeMojoService(http_client)
 billboard_service = BillboardArtist100Service(http_client, imdb_service)
@@ -83,6 +89,7 @@ def home(request: Request) -> HTMLResponse:
             "upcoming_movies_url": os.getenv("UPCOMING_MOVIES_URL", ""),
             "imdb_enabled": os.getenv("IMDB_ENABLED", "true").strip().lower()
             not in {"0", "false", "no", "off"},
+            "tmdb_enabled": imdb_service.tmdb_enabled,
         },
     )
 
@@ -343,9 +350,15 @@ async def start_imdb_series(request: Request) -> HTMLResponse:
     date_window = await _date_window_from_request(request)
     if isinstance(date_window, HTMLResponse):
         return date_window
+    # Prefer the full local IMDb index when enabled; otherwise fall back to the
+    # TMDB API path so the tool still works on a hosted free instance.
+    if imdb_service.enabled:
+        snapshot_fn = imdb_service.fetch_snapshot
+    else:
+        snapshot_fn = imdb_service.fetch_snapshot_via_tmdb
     job = job_manager.start(
         "imdb",
-        lambda progress: imdb_service.fetch_snapshot(
+        lambda progress: snapshot_fn(
             metacritic_parser,
             start_date=date_window["start_date"],
             end_date=date_window["end_date"],

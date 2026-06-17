@@ -7,14 +7,31 @@ container host (Render). It bundles:
 - **YouTube Release Verifier** — verify movie/TV titles against official YouTube channels.
 - **Upcoming Release Movies** — live upcoming theatrical release list (runs as a second service).
 
-## What's intentionally NOT included on the hosted version
+## TV Season & Episode enrichment on the hosted version (free)
 
-The Metacritic/IMDb calendar tools (TV premiere, movie/game release calendars,
-TV seasons & episodes, IMDb bulk verifier, Billboard Artist 100) need a
-multi-gigabyte local IMDb dataset and index. That can't run on a free tier, so
-they are disabled here via `IMDB_ENABLED=false`. They still work in the full
-local install. To enable them later, move to a paid plan with a persistent disk
-and set `IMDB_ENABLED=true`.
+The **"Daily - TV Season and Episode Data Review"** card works on the free Render
+tier — no paid plan or disk required. When the local IMDb index is off
+(`IMDB_ENABLED=false`, the hosted default), the tool enriches each Metacritic TV
+title with its IMDb ttcode, total seasons, and total episodes by querying the
+**TMDB API** instead of the multi-gigabyte local dataset.
+
+To turn it on for the hosted site:
+
+1. Get a free TMDB API key: themoviedb.org → create an account → **Settings →
+   API** → request a developer key.
+2. In the Render dashboard for `media-tools-hub` (Environment tab), set
+   `TMDB_API_KEY` (or `TMDB_READ_ACCESS_TOKEN`). That's the only requirement —
+   the card appears automatically once a TMDB key is present.
+
+Caveats: TMDB matches by title, so an occasional obscure or ambiguous title may
+come back blank or low-confidence; season/episode counts reflect TMDB's data
+(usually accurate, can differ slightly from IMDb); and free Render instances
+cold-start (~30–60s) after idle.
+
+The heavier IMDb-index tools (full ttcode enrichment across all calendars, IMDb
+bulk verifier) still need the multi-GB local dataset and run in the full local
+install (`IMDB_ENABLED=true`). To run those on Render you'd need a paid plan with
+a persistent disk; the TMDB path above avoids that for the season/episode tool.
 
 ## Deploy to Render (free)
 

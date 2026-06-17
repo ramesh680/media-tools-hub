@@ -103,11 +103,11 @@
       </form>
     </article>
 
-    {% if imdb_enabled %}
+    {% if imdb_enabled or tmdb_enabled %}
     <article class="action-card">
       <p class="eyebrow">IMDb Enrichment</p>
       <h3>Daily - TV Season and Episode Data Review</h3>
-      <p>Fetches Metacritic's TV Premiere Calendar for the selected date window, excludes $, Rent/Buy, Movie, and Special rows, then enriches the remaining titles with IMDb ttcode, total seasons, and total episodes.</p>
+      <p>Fetches Metacritic's TV Premiere Calendar for the selected date window, excludes $, Rent/Buy, Movie, and Special rows, then enriches the remaining titles with IMDb ttcode, total seasons, and total episodes.{% if not imdb_enabled %} On this hosted version the season/episode counts and ttcode come from the TMDB API.{% endif %}</p>
       <form class="tracker-form" hx-post="/tv-premiere-imdb-series/start" hx-target="#workspace" hx-swap="outerHTML">
         {{ date_window_controls(today_iso) }}
         <button class="primary-button" type="submit">Fetch IMDb-Enriched Series</button>

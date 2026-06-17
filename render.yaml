@@ -15,6 +15,9 @@ services:
     dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /
     envVars:
+      # IMDB_ENABLED stays false on the free tier (the multi-GB local index can't
+      # run here). The "Daily - TV Season and Episode Data Review" card still works
+      # via the TMDB API as long as TMDB_API_KEY (or TMDB_READ_ACCESS_TOKEN) is set.
       - key: IMDB_ENABLED
         value: "false"
       # Secrets - set the values in the Render dashboard (sync:false = not stored in repo).

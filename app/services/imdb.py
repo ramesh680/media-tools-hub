@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable, Iterable
 import csv
@@ -51,15 +52,29 @@ def _imdb_features_enabled() -> bool:
 
 
 class IMDbEnrichmentService:
-    def __init__(self, cache_dir: Path, max_age_days: int, http_client: HttpClient) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        max_age_days: int,
+        http_client: HttpClient,
+        tmdb_api_key: str = "",
+        tmdb_read_access_token: str = "",
+    ) -> None:
         self.cache_dir = cache_dir
         self.max_age_days = max_age_days
         self.http_client = http_client
         self.enabled = _imdb_features_enabled()
+        self.tmdb_api_key = tmdb_api_key
+        self.tmdb_read_access_token = tmdb_read_access_token
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.cache_dir / "imdb_series_index.sqlite3"
         self._metacritic_season_cache: dict[str, tuple[date | None, date | None, int | None]] = {}
         self._imdb_episode_count_cache: dict[tuple[str, int], int] = {}
+        self._tmdb_tv_cache: dict[tuple[str, str], dict[str, str | int] | None] = {}
+
+    @property
+    def tmdb_enabled(self) -> bool:
+        return bool(self.tmdb_api_key or self.tmdb_read_access_token)
 
     def fetch_snapshot(
         self,
@@ -196,6 +211,173 @@ class IMDbEnrichmentService:
                 }
             ],
         }
+
+    def fetch_snapshot_via_tmdb(
+        self,
+        metacritic: MetacriticParser,
+        today: date | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> dict:
+        """IMDb-Enriched TV Series snapshot built from the TMDB API.
+
+        This is the free-tier path: it produces the same columns as
+        ``fetch_snapshot`` (ttcode, Total Seasons, Total Episodes) but sources
+        them live from TMDB instead of the multi-GB local IMDb index, so it runs
+        on a hosted free instance with only a TMDB API key configured.
+        """
+        if not self.tmdb_enabled:
+            raise IMDbUnavailableError(
+                "TMDB enrichment needs a TMDB API key. Set TMDB_API_KEY (or "
+                "TMDB_READ_ACCESS_TOKEN) to enable the IMDb-Enriched Series tool "
+                "on this deployment, or run the full local install."
+            )
+        today = today or date.today()
+        start_date = start_date or today - timedelta(days=2)
+        end_date = end_date or today
+        if end_date < start_date:
+            raise ValueError("End date must be the same as or later than the start date.")
+        if progress:
+            progress(8, "Fetching Metacritic TV data for the enrichment window")
+        html = metacritic.http_client.get_text(TV_PREMIERE_URL)
+        tv_rows = metacritic.parse_tv_calendar(html, today=today)
+        window_rows = [
+            row
+            for row in tv_rows
+            if start_date <= date.fromisoformat(row["Release Date"]) <= end_date
+        ]
+        filtered_rows = [row for row in window_rows if self._is_imdb_eligible(row)]
+
+        enriched: list[dict[str, str | int]] = []
+        matched = 0
+        total = max(len(filtered_rows), 1)
+        for index, row in enumerate(filtered_rows, start=1):
+            if progress:
+                progress(20 + int((index / total) * 70), f"Looking up {row.get('Title Name', '')} on TMDB")
+            result = self._tmdb_tv_lookup(row)
+            if result and result.get("ttcode"):
+                matched += 1
+            enriched.append(
+                self._output_row(
+                    row,
+                    result.get("ttcode", "") if result else "",
+                    result.get("total_seasons", "") if result else "",
+                    result.get("total_episodes", "") if result else "",
+                    result.get("note", "No confident TMDB match.") if result else "No confident TMDB match.",
+                )
+            )
+
+        summary = (
+            f"Scanned Metacritic TV rows from {start_date.isoformat()} through {end_date.isoformat()}. "
+            f"Filtered rows: {len(filtered_rows)}. Matched on TMDB: {matched}. "
+            "Total Seasons, Total Episodes, and the IMDb ttcode come from the TMDB API "
+            "(free-tier source; no local IMDb index). Release date comes from Metacritic. "
+            "A few obscure or ambiguous titles may be blank when TMDB has no confident match."
+        )
+        return {
+            "tracker_type": "imdb",
+            "title": "IMDb-Enriched TV Series Snapshot",
+            "created_at": utc_now_iso(),
+            "source_url": TV_PREMIERE_URL,
+            "summary": summary,
+            "sections": [
+                {
+                    "key": "imdb",
+                    "title": "IMDb-Enriched TV Series Snapshot",
+                    "columns": IMDB_COLUMNS,
+                    "rows": enriched,
+                    "row_count": len(enriched),
+                    "supports_google": False,
+                }
+            ],
+        }
+
+    def _tmdb_tv_lookup(self, metacritic_row: dict[str, str]) -> dict[str, str | int] | None:
+        title = (metacritic_row.get("Title Name", "") or "").strip()
+        if not title:
+            return None
+        release_date_raw = metacritic_row.get("Release Date", "") or ""
+        release_year = release_date_raw[:4]
+        cache_key = (normalize_title(title), release_year)
+        if cache_key in self._tmdb_tv_cache:
+            return self._tmdb_tv_cache[cache_key]
+
+        result: dict[str, str | int] | None = None
+        try:
+            search_params: dict[str, Any] = {
+                "query": title,
+                "include_adult": "false",
+                "language": "en-US",
+            }
+            if release_year.isdigit():
+                search_params["first_air_date_year"] = release_year
+            if self.tmdb_api_key:
+                search_params["api_key"] = self.tmdb_api_key
+            results = self._tmdb_get_json(
+                "https://api.themoviedb.org/3/search/tv", search_params
+            ).get("results", [])[:6]
+
+            normalized_target = normalize_title(title)
+            best_score = -1.0
+            best: dict[str, str | int] | None = None
+            for candidate in results:
+                tmdb_id = candidate.get("id")
+                if not tmdb_id:
+                    continue
+                detail_params: dict[str, Any] = {
+                    "append_to_response": "external_ids",
+                    "language": "en-US",
+                }
+                if self.tmdb_api_key:
+                    detail_params["api_key"] = self.tmdb_api_key
+                details = self._tmdb_get_json(
+                    f"https://api.themoviedb.org/3/tv/{tmdb_id}", detail_params
+                )
+                candidate_name = details.get("name") or details.get("original_name") or ""
+                score = SequenceMatcher(None, normalized_target, normalize_title(candidate_name)).ratio() * 100
+                first_air = (details.get("first_air_date") or "")[:4]
+                if release_year.isdigit() and first_air.isdigit():
+                    if first_air == release_year:
+                        score += 25
+                    elif abs(int(first_air) - int(release_year)) <= 1:
+                        score += 10
+                if score <= best_score:
+                    continue
+                external_ids = details.get("external_ids") or {}
+                best_score = score
+                best = {
+                    "ttcode": external_ids.get("imdb_id") or "",
+                    "total_seasons": details.get("number_of_seasons") or "",
+                    "total_episodes": details.get("number_of_episodes") or "",
+                    "note": (
+                        f"Matched via TMDB (\"{candidate_name}\")."
+                        if score >= 60
+                        else f"Low-confidence TMDB match (\"{candidate_name}\")."
+                    ),
+                }
+            # Require a reasonable title similarity before accepting the match.
+            if best is not None and best_score >= 45:
+                result = best
+        except Exception:
+            result = None
+
+        self._tmdb_tv_cache[cache_key] = result
+        return result
+
+    def _tmdb_get_json(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
+        headers = {"Accept": "application/json"}
+        if self.tmdb_read_access_token:
+            headers["Authorization"] = f"Bearer {self.tmdb_read_access_token}"
+        response = self.http_client.session.get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=self.http_client.timeout_seconds,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+        return response.json()
 
     def ensure_index(self, progress: ProgressCallback | None = None) -> None:
         if not self.enabled:
