@@ -105,12 +105,12 @@
 
     {% if imdb_enabled %}
     <article class="action-card">
-      <p class="eyebrow">TV</p>
-      <h3>TV Seasons and Episodes</h3>
-      <p>Matches Metacritic's TV premiere rows for the selected window to IMDb and returns each title's latest season number, season start/end dates, and latest-season episode count. Download as CSV or Excel. Needs the local IMDb index, so it runs in the local install only.</p>
-      <form class="tracker-form" hx-post="/tv-season-episodes/start" hx-target="#workspace" hx-swap="outerHTML">
+      <p class="eyebrow">IMDb Enrichment</p>
+      <h3>Daily - TV Season and Episode Data Review</h3>
+      <p>Fetches Metacritic's TV Premiere Calendar for the selected date window, excludes $, Rent/Buy, Movie, and Special rows, then enriches the remaining titles with IMDb ttcode, total seasons, and total episodes.</p>
+      <form class="tracker-form" hx-post="/tv-premiere-imdb-series/start" hx-target="#workspace" hx-swap="outerHTML">
         {{ date_window_controls(today_iso) }}
-        <button class="primary-button" type="submit">Fetch TV Seasons and Episodes</button>
+        <button class="primary-button" type="submit">Fetch IMDb-Enriched Series</button>
       </form>
     </article>
     {% endif %}
