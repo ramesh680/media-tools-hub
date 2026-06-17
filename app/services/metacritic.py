@@ -218,7 +218,10 @@ class MetacriticParser:
         html = self.http_client.get_text(TV_PREMIERE_URL)
         if progress:
             progress(28, "Parsing date-grouped TV premiere sections")
-        rows = _filter_tv_premiere_rows(self.parse_tv_calendar(html, today=today))
+        # No Special/Live Event exclusion here: the TV Premiere Calendar returns
+        # every parsed row (Rent/Buy items already appear, tagged in Availability).
+        # The IMDb tools apply their own _is_imdb_eligible filter separately.
+        rows = self.parse_tv_calendar(html, today=today)
         selected_rows = [
             row for row in rows if start_date <= date.fromisoformat(row["Release Date"]) <= end_date
         ]
