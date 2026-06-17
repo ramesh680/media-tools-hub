@@ -103,6 +103,18 @@
       </form>
     </article>
 
+    {% if imdb_enabled %}
+    <article class="action-card">
+      <p class="eyebrow">TV</p>
+      <h3>TV Seasons and Episodes</h3>
+      <p>Matches Metacritic's TV premiere rows for the selected window to IMDb and returns each title's latest season number, season start/end dates, and latest-season episode count. Download as CSV or Excel. Needs the local IMDb index, so it runs in the local install only.</p>
+      <form class="tracker-form" hx-post="/tv-season-episodes/start" hx-target="#workspace" hx-swap="outerHTML">
+        {{ date_window_controls(today_iso) }}
+        <button class="primary-button" type="submit">Fetch TV Seasons and Episodes</button>
+      </form>
+    </article>
+    {% endif %}
+
     <article class="action-card">
       <p class="eyebrow">Movies</p>
       <h3>Movie Release Calendar</h3>
