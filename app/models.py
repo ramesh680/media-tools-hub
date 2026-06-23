@@ -94,6 +94,7 @@ BOX_OFFICE_RECENT_OPENING_COLUMNS = [
     "Release Date",
     "Opening Gross",
     "Opening Theaters",
+    "Domestic Opening Weekend Rank",
     "Source URL",
 ]
 

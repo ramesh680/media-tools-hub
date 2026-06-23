@@ -15,9 +15,22 @@ services:
     dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /
     envVars:
-      # IMDB_ENABLED stays false on the free tier (the multi-GB local index can't
-      # run here). The "Daily - TV Season and Episode Data Review" card still works
-      # via the TMDB API as long as TMDB_API_KEY (or TMDB_READ_ACCESS_TOKEN) is set.
+      # IMDB_ENABLED stays false on the free tier: the official IMDb datasets
+      # (title.basics + name.basics from datasets.imdbws.com) and the SQLite index
+      # built from them are multi-GB and need a paid plan + persistent disk. With it
+      # off, the IMDb-enriched cards fall back to the TMDB API and Wikidata so the
+      # lightweight tools keep working.
+      #
+      # To switch to dataset-backed IMDb codes (titles -> title.basics, talent ->
+      # name.basics) set IMDB_ENABLED to "true", move this service to a paid plan
+      # (>= standard, 2 GB RAM), and add a persistent disk, e.g.:
+      #     plan: standard
+      #     disk:
+      #       name: imdb-index
+      #       mountPath: /var/imdb
+      #       sizeGB: 10
+      # then add an IMDB_CACHE_DIR env var set to /var/imdb so the index survives
+      # restarts instead of re-downloading on every boot.
       - key: IMDB_ENABLED
         value: "false"
       # Secrets - set the values in the Render dashboard (sync:false = not stored in repo).

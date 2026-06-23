@@ -255,6 +255,12 @@ h3 {
   text-transform: uppercase;
 }
 
+.date-range-hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .range-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

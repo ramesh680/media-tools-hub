@@ -11,10 +11,11 @@
   <aside class="tracking-card" aria-label="How it works">
     <p class="eyebrow">How it works</p>
     <ul>
-      <li>Leave the date blank for the latest chart.</li>
-      <li>Or pick any date - Billboard serves that week's chart.</li>
+      <li>Leave everything blank for the latest chart.</li>
+      <li>Pick a <strong>start + end date</strong> to scan every weekly chart in that range.</li>
+      <li>Or pick a single date - Billboard serves that week's chart.</li>
       <li>You get an <strong>.xlsx</strong>: Rank, Artist, LW, Peak, Weeks, Chart Date, <strong>IMDb nmcode + URL</strong>, <strong>Wikipedia URL</strong>, Billboard URL.</li>
-      <li>IMDb &amp; Wikipedia are looked up live via Wikidata; artists without a match are left blank.</li>
+      <li>Artists are talent, so their IMDb <strong>nm</strong> code comes from IMDb's <strong>name.basics</strong> dataset (with a Wikidata fallback); Wikipedia comes from Wikidata.</li>
     </ul>
   </aside>
 </section>
@@ -34,11 +35,25 @@
 
   <section class="action-stack">
     <article class="action-card">
-      <h3>Choose a chart date (optional)</h3>
-      <p>Billboard charts are weekly. Pick a date for that week, or leave blank for the most recent chart.</p>
+      <h3>Choose a date range (optional)</h3>
+      <p>Billboard charts are weekly. Pick a <strong>start and end date</strong> to scan every weekly chart in that range (up to 27 weeks) and collect all new entries, pick a single chart date for one week, or leave everything blank for the most recent chart.</p>
       <form class="tracker-form" method="post" action="/billboard-new-entries">
         <fieldset class="date-controls">
-          <legend>Chart date</legend>
+          <legend>Date range</legend>
+          <p class="date-range-hint">Set both for a range. Leave blank to use the single chart date or the latest chart.</p>
+          <div class="custom-date-row">
+            <label>
+              <span>Start</span>
+              <input type="date" name="start_date" value="">
+            </label>
+            <label>
+              <span>End</span>
+              <input type="date" name="end_date" value="">
+            </label>
+          </div>
+        </fieldset>
+        <fieldset class="date-controls">
+          <legend>Single chart date</legend>
           <label>
             <span>Date (YYYY-MM-DD)</span>
             <input type="date" name="chart_date" value="">
