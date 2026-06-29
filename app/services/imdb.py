@@ -59,6 +59,7 @@ class IMDbEnrichmentService:
         http_client: HttpClient,
         tmdb_api_key: str = "",
         tmdb_read_access_token: str = "",
+        omdb_api_key: str = "",
     ) -> None:
         self.cache_dir = cache_dir
         self.max_age_days = max_age_days
@@ -66,11 +67,13 @@ class IMDbEnrichmentService:
         self.enabled = _imdb_features_enabled()
         self.tmdb_api_key = tmdb_api_key
         self.tmdb_read_access_token = tmdb_read_access_token
+        self.omdb_api_key = omdb_api_key
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.cache_dir / "imdb_series_index.sqlite3"
         self._metacritic_season_cache: dict[str, tuple[date | None, date | None, int | None]] = {}
         self._imdb_episode_count_cache: dict[tuple[str, int], int] = {}
         self._tmdb_tv_cache: dict[tuple[str, str], dict[str, str | int] | None] = {}
+        self._omdb_tv_cache: dict[tuple[str, str], dict[str, str] | None] = {}
         self._tmdb_tv_season_cache: dict[tuple[str, str, int], dict[str, Any] | None] = {}
 
     @property
@@ -257,17 +260,20 @@ class IMDbEnrichmentService:
             if progress:
                 progress(20 + int((index / total) * 70), f"Looking up {row.get('Title Name', '')} on TMDB")
             result = self._tmdb_tv_lookup(row)
-            if result and result.get("ttcode"):
+            ttcode = result.get("ttcode", "") if result else ""
+            total_seasons = result.get("total_seasons", "") if result else ""
+            total_episodes = result.get("total_episodes", "") if result else ""
+            note = result.get("note", "No confident TMDB match.") if result else "No confident TMDB match."
+            if not ttcode and self.omdb_api_key:
+                omdb_result = self._omdb_tv_lookup(row)
+                if omdb_result and omdb_result.get("ttcode"):
+                    ttcode = omdb_result["ttcode"]
+                    total_seasons = total_seasons or omdb_result.get("total_seasons", "")
+                    total_episodes = total_episodes or omdb_result.get("total_episodes", "")
+                    note = omdb_result.get("note", note)
+            if ttcode:
                 matched += 1
-            enriched.append(
-                self._output_row(
-                    row,
-                    result.get("ttcode", "") if result else "",
-                    result.get("total_seasons", "") if result else "",
-                    result.get("total_episodes", "") if result else "",
-                    result.get("note", "No confident TMDB match.") if result else "No confident TMDB match.",
-                )
-            )
+            enriched.append(self._output_row(row, ttcode, total_seasons, total_episodes, note))
 
         summary = (
             f"Scanned Metacritic TV rows from {start_date.isoformat()} through {end_date.isoformat()}. "
@@ -558,6 +564,99 @@ class IMDbEnrichmentService:
             ),
         }
 
+
+    def _omdb_tv_lookup(self, metacritic_row: dict[str, str]) -> dict[str, str] | None:
+        """Secondary IMDb-id lookup via the OMDb API (omdbapi.com).
+
+        Used only as a fallback for the IMDb-Enriched snapshot when TMDB returns
+        no confident match. OMDb resolves an IMDb id (and totalSeasons) directly
+        from a title, which covers some titles TMDB's TV search misses. It does
+        not expose a total-episode count, so that field is left blank.
+        """
+        title = (metacritic_row.get("Title Name", "") or "").strip()
+        if not title or not self.omdb_api_key:
+            return None
+        release_year = (metacritic_row.get("Release Date", "") or "")[:4]
+        cache_key = (normalize_title(title), release_year)
+        if cache_key in self._omdb_tv_cache:
+            return self._omdb_tv_cache[cache_key]
+
+        result: dict[str, str] | None = None
+        try:
+            normalized_target = normalize_title(title)
+
+            def _accept(data: dict[str, Any]) -> tuple[dict[str, Any], str] | None:
+                if str(data.get("Response")) != "True":
+                    return None
+                imdb_id = str(data.get("imdbID", "") or "")
+                if not imdb_id.startswith("tt"):
+                    return None
+                cand_name = str(data.get("Title", "") or "")
+                score = SequenceMatcher(None, normalized_target, normalize_title(cand_name)).ratio() * 100
+                return (data, cand_name) if score >= 55 else None
+
+            # 1) Exact-title attempts (series first, with and without year).
+            attempts: list[dict[str, Any]] = []
+            if release_year.isdigit():
+                attempts.append({"t": title, "type": "series", "y": release_year})
+            attempts.append({"t": title, "type": "series"})
+            attempts.append({"t": title})
+            best: tuple[dict[str, Any], str] | None = None
+            for params in attempts:
+                best = _accept(self._omdb_get_json(params))
+                if best:
+                    break
+
+            # 2) Search fallback: rank results by title similarity, then fetch by id.
+            if best is None:
+                search = self._omdb_get_json({"s": title, "type": "series"})
+                if str(search.get("Response")) == "True":
+                    items = [it for it in (search.get("Search") or []) if isinstance(it, dict)]
+                    items.sort(
+                        key=lambda it: SequenceMatcher(
+                            None, normalized_target, normalize_title(str(it.get("Title", "")))
+                        ).ratio(),
+                        reverse=True,
+                    )
+                    if items:
+                        top = items[0]
+                        sim = SequenceMatcher(
+                            None, normalized_target, normalize_title(str(top.get("Title", "")))
+                        ).ratio() * 100
+                        imdb_id = str(top.get("imdbID", "") or "")
+                        if sim >= 55 and imdb_id.startswith("tt"):
+                            detail = self._omdb_get_json({"i": imdb_id})
+                            data = detail if str(detail.get("Response")) == "True" else top
+                            best = (data, str(top.get("Title", "") or ""))
+
+            if best is not None:
+                data, cand_name = best
+                total_seasons = str(data.get("totalSeasons", "") or "")
+                if total_seasons in {"N/A", "None"}:
+                    total_seasons = ""
+                result = {
+                    "ttcode": str(data.get("imdbID", "") or ""),
+                    "total_seasons": total_seasons,
+                    "total_episodes": "",
+                    "note": f"Matched via OMDb (\"{cand_name}\").",
+                }
+        except Exception:
+            result = None
+
+        self._omdb_tv_cache[cache_key] = result
+        return result
+
+    def _omdb_get_json(self, params: dict[str, Any]) -> dict[str, Any]:
+        query = {"apikey": self.omdb_api_key, "r": "json"}
+        query.update(params)
+        response = self.http_client.session.get(
+            "https://www.omdbapi.com/",
+            params=query,
+            timeout=self.http_client.timeout_seconds,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+        return response.json()
 
     def _tmdb_tv_lookup(self, metacritic_row: dict[str, str]) -> dict[str, str | int] | None:
         title = (metacritic_row.get("Title Name", "") or "").strip()

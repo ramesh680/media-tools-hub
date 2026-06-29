@@ -40,6 +40,8 @@ services:
         value: "6891671a0d1a2f06ddae357589aa30f6"
       - key: TMDB_READ_ACCESS_TOKEN
         value: "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI2ODkxNjcxYTBkMWEyZjA2ZGRhZTM1NzU4OWFhMzBmNiIsIm5iZiI6MTc1ODE3ODQzNi42MjcsInN1YiI6IjY4Y2JhYzg0MzMyNzUwYThlMGJkMGI0OSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.oTjMD3pEu4vOE-A6sX0XZgqRS8M7i7Gs3_i62p5NHqQ"
+      - key: OMDB_API_KEY
+        value: "ff9e5383"
       # After the movies service is live, paste its full https URL here so the
       # hub shows a link card for it (e.g. https://upcoming-release-movies.onrender.com).
       - key: UPCOMING_MOVIES_URL

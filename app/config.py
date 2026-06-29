@@ -40,6 +40,7 @@ class Settings:
     google_application_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
     google_service_account_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
     tmdb_api_key = os.getenv("TMDB_API_KEY", "")
+    omdb_api_key = os.getenv("OMDB_API_KEY", "")
     tmdb_read_access_token = os.getenv("TMDB_READ_ACCESS_TOKEN", "")
     youtube_api_key = os.getenv("YOUTUBE_API_KEY", "")
 

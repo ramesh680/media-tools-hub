@@ -40,6 +40,7 @@ imdb_service = IMDbEnrichmentService(
     http_client,
     settings.tmdb_api_key,
     settings.tmdb_read_access_token,
+    settings.omdb_api_key,
 )
 imdb_verifier_service = IMDbBulkVerifierService(imdb_service)
 box_office_service = BoxOfficeMojoService(http_client)
