@@ -373,9 +373,15 @@ async def start_tv_season_episodes(request: Request) -> HTMLResponse:
     date_window = await _date_window_from_request(request)
     if isinstance(date_window, HTMLResponse):
         return date_window
+    # Prefer the full local IMDb index when enabled; otherwise fall back to the
+    # TMDB API path so the tool still fetches ttcodes on a hosted free instance.
+    if imdb_service.enabled:
+        season_fn = imdb_service.fetch_season_episode_snapshot
+    else:
+        season_fn = imdb_service.fetch_season_episode_snapshot_via_tmdb
     job = job_manager.start(
         "tv_seasons",
-        lambda progress: imdb_service.fetch_season_episode_snapshot(
+        lambda progress: season_fn(
             metacritic_parser,
             start_date=date_window["start_date"],
             end_date=date_window["end_date"],

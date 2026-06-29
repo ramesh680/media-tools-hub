@@ -71,6 +71,7 @@ class IMDbEnrichmentService:
         self._metacritic_season_cache: dict[str, tuple[date | None, date | None, int | None]] = {}
         self._imdb_episode_count_cache: dict[tuple[str, int], int] = {}
         self._tmdb_tv_cache: dict[tuple[str, str], dict[str, str | int] | None] = {}
+        self._tmdb_tv_season_cache: dict[tuple[str, str, int], dict[str, Any] | None] = {}
 
     @property
     def tmdb_enabled(self) -> bool:
@@ -292,6 +293,271 @@ class IMDbEnrichmentService:
                 }
             ],
         }
+
+    def fetch_season_episode_snapshot_via_tmdb(
+        self,
+        metacritic: MetacriticParser,
+        today: date | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> dict:
+        """TV Seasons and Episodes snapshot built from the TMDB API.
+
+        This is the free-tier counterpart to ``fetch_season_episode_snapshot``.
+        It produces the same columns (imdb_id/ttcode, latest season number,
+        latest season episode count, season start/end dates) but sources the
+        IMDb ttcode and season/episode counts live from the TMDB API instead of
+        the multi-GB local IMDb index, so it runs on a hosted free instance with
+        only a TMDB API key configured. Release/season dates still prefer the
+        Metacritic season pages when available and fall back to TMDB air dates.
+        """
+        if not self.tmdb_enabled:
+            raise IMDbUnavailableError(
+                "TMDB enrichment needs a TMDB API key. Set TMDB_API_KEY (or "
+                "TMDB_READ_ACCESS_TOKEN) to enable the TV Seasons and Episodes "
+                "tool on this deployment, or run the full local install."
+            )
+        today = today or date.today()
+        start_date = start_date or today - timedelta(days=7)
+        end_date = end_date or today
+        if end_date < start_date:
+            raise ValueError("End date must be the same as or later than the start date.")
+        if progress:
+            progress(8, "Fetching Metacritic TV rows for the season and episode window")
+        html = metacritic.http_client.get_text(TV_PREMIERE_URL)
+        tv_rows = metacritic.parse_tv_calendar(html, today=today)
+        window_rows = [
+            row
+            for row in tv_rows
+            if start_date <= date.fromisoformat(row["Release Date"]) <= end_date
+        ]
+        filtered_rows = [row for row in window_rows if self._is_imdb_eligible(row)]
+
+        output_rows: list[dict[str, str | int]] = []
+        matched = 0
+        total = max(len(filtered_rows), 1)
+        for index, row in enumerate(filtered_rows, start=1):
+            if progress:
+                progress(
+                    20 + int((index / total) * 70),
+                    f"Looking up season data for {row.get('Title Name', '')} on TMDB",
+                )
+            output_row = self._season_episode_row_via_tmdb(row)
+            if output_row.get("imdb_id"):
+                matched += 1
+            output_rows.append(output_row)
+
+        summary = (
+            f"Scanned Metacritic TV rows from {start_date.isoformat()} through {end_date.isoformat()}. "
+            f"Filtered rows: {len(filtered_rows)}. Matched on TMDB: {matched}. "
+            "The IMDb ttcode, latest season number, and latest_season_episode_count come from the TMDB "
+            "API (free-tier source; no local IMDb index). Season start/end dates prefer the Metacritic "
+            "season premiere or TMDB air dates and otherwise default to the calendar row date through "
+            "30 days later. A few obscure or ambiguous titles may be blank when TMDB has no confident match."
+        )
+        return {
+            "tracker_type": "tv_seasons",
+            "title": "TV Seasons and Episodes Snapshot",
+            "created_at": utc_now_iso(),
+            "source_url": TV_PREMIERE_URL,
+            "summary": summary,
+            "sections": [
+                {
+                    "key": "tv_seasons",
+                    "title": "TV Seasons and Episodes",
+                    "columns": TV_SEASON_EPISODE_COLUMNS,
+                    "rows": output_rows,
+                    "row_count": len(output_rows),
+                    "supports_google": False,
+                }
+            ],
+        }
+
+    def _season_episode_row_via_tmdb(
+        self,
+        metacritic_row: dict[str, str],
+    ) -> dict[str, str | int]:
+        calendar_date = date.fromisoformat(metacritic_row["Release Date"])
+        preferred_season = _season_from_metacritic_url(metacritic_row.get("Source URL", ""))
+        source_episode_number = _episode_from_metacritic_url(metacritic_row.get("Source URL", ""))
+        metacritic_start_date, metacritic_end_date, metacritic_episode_count = self._metacritic_season_context(
+            metacritic_row,
+            calendar_date,
+        )
+
+        lookup = self._tmdb_tv_season_lookup(metacritic_row, preferred_season)
+        ttcode = (lookup.get("ttcode") or "") if lookup else ""
+
+        season_number = (lookup.get("latest_season_number") if lookup else None) or preferred_season
+        if season_number:
+            metacritic_start_date, metacritic_end_date, metacritic_episode_count = _merge_season_context(
+                (metacritic_start_date, metacritic_end_date, metacritic_episode_count),
+                self._metacritic_season_context_for_url(
+                    _metacritic_season_url_for_number(metacritic_row, season_number),
+                    calendar_date,
+                ),
+            )
+        season_start_date = (
+            (lookup.get("season_air_date") if lookup else None)
+            or metacritic_start_date
+            or calendar_date
+        )
+        episode_count = max(
+            int(lookup.get("latest_season_episode_count") or 0) if lookup else 0,
+            metacritic_episode_count or 0,
+            source_episode_number or 0,
+            _episode_count_from_details(metacritic_row, season_number),
+            _known_episode_count_override(metacritic_row, season_number),
+        )
+        season_end_date = (
+            (lookup.get("last_air_date") if lookup else None)
+            or metacritic_end_date
+            or _infer_season_end_date(season_start_date, metacritic_row)
+        )
+        return {
+            "release_date": _display_date(season_start_date),
+            "title": metacritic_row.get("Title Name", ""),
+            "daypart": metacritic_row.get("Daypart", ""),
+            "program_type": metacritic_row.get("Program Type", ""),
+            "language_type": metacritic_row.get("Language Type", ""),
+            "network_distributor": metacritic_row.get("Availability / Network", ""),
+            "imdb_id": ttcode,
+            "metacritic_url": metacritic_url_for_row(metacritic_row, default_media_type="tv"),
+            "latest_season_number": season_number or "",
+            "latest_season_episode_count": episode_count or "",
+            "latest_season_start_date": _display_date(season_start_date),
+            "latest_season_end_date": _display_date(season_end_date),
+        }
+
+    def _tmdb_tv_season_lookup(
+        self,
+        metacritic_row: dict[str, str],
+        preferred_season: int | None = None,
+    ) -> dict[str, Any] | None:
+        title = (metacritic_row.get("Title Name", "") or "").strip()
+        if not title:
+            return None
+        release_date_raw = metacritic_row.get("Release Date", "") or ""
+        release_year = release_date_raw[:4]
+        cache_key = (normalize_title(title), release_year, preferred_season or 0)
+        if cache_key in self._tmdb_tv_season_cache:
+            return self._tmdb_tv_season_cache[cache_key]
+
+        result: dict[str, Any] | None = None
+        try:
+            search_params: dict[str, Any] = {
+                "query": title,
+                "include_adult": "false",
+                "language": "en-US",
+            }
+            if release_year.isdigit():
+                search_params["first_air_date_year"] = release_year
+            if self.tmdb_api_key:
+                search_params["api_key"] = self.tmdb_api_key
+            results = self._tmdb_get_json(
+                "https://api.themoviedb.org/3/search/tv", search_params
+            ).get("results", [])[:6]
+
+            normalized_target = normalize_title(title)
+            best_score = -1.0
+            best_details: dict[str, Any] | None = None
+            best_name = ""
+            for candidate in results:
+                tmdb_id = candidate.get("id")
+                if not tmdb_id:
+                    continue
+                detail_params: dict[str, Any] = {
+                    "append_to_response": "external_ids",
+                    "language": "en-US",
+                }
+                if self.tmdb_api_key:
+                    detail_params["api_key"] = self.tmdb_api_key
+                details = self._tmdb_get_json(
+                    f"https://api.themoviedb.org/3/tv/{tmdb_id}", detail_params
+                )
+                candidate_name = details.get("name") or details.get("original_name") or ""
+                score = SequenceMatcher(None, normalized_target, normalize_title(candidate_name)).ratio() * 100
+                first_air = (details.get("first_air_date") or "")[:4]
+                if release_year.isdigit() and first_air.isdigit():
+                    if first_air == release_year:
+                        score += 25
+                    elif abs(int(first_air) - int(release_year)) <= 1:
+                        score += 10
+                if score <= best_score:
+                    continue
+                best_score = score
+                best_details = details
+                best_name = candidate_name
+            # Require a reasonable title similarity before accepting the match.
+            if best_details is not None and best_score >= 45:
+                result = self._season_fields_from_tmdb_details(
+                    best_details, best_name, best_score, preferred_season
+                )
+        except Exception:
+            result = None
+
+        self._tmdb_tv_season_cache[cache_key] = result
+        return result
+
+    def _season_fields_from_tmdb_details(
+        self,
+        details: dict[str, Any],
+        candidate_name: str,
+        score: float,
+        preferred_season: int | None = None,
+    ) -> dict[str, Any]:
+        external_ids = details.get("external_ids") or {}
+        ttcode = external_ids.get("imdb_id") or details.get("imdb_id") or ""
+
+        seasons = [item for item in (details.get("seasons") or []) if isinstance(item, dict)]
+        real_seasons = [
+            item
+            for item in seasons
+            if (_safe_int(str(item.get("season_number"))) or 0) >= 1
+        ]
+        chosen_season: dict[str, Any] | None = None
+        if preferred_season:
+            for item in real_seasons:
+                if _safe_int(str(item.get("season_number"))) == preferred_season:
+                    chosen_season = item
+                    break
+        if chosen_season is None and real_seasons:
+            chosen_season = max(
+                real_seasons,
+                key=lambda item: _safe_int(str(item.get("season_number"))) or 0,
+            )
+
+        latest_season_number: int | None = None
+        latest_season_episode_count: int | None = None
+        season_air_date: date | None = None
+        if chosen_season:
+            latest_season_number = _safe_int(str(chosen_season.get("season_number")))
+            latest_season_episode_count = _safe_int(str(chosen_season.get("episode_count"))) or None
+            season_air_date = _parse_iso_date(chosen_season.get("air_date") or "")
+        if latest_season_number is None:
+            latest_season_number = _safe_int(str(details.get("number_of_seasons"))) or None
+
+        last_air_date: date | None = None
+        last_episode = details.get("last_episode_to_air") or {}
+        if isinstance(last_episode, dict) and last_episode:
+            last_season = _safe_int(str(last_episode.get("season_number")))
+            if latest_season_number is None or last_season == latest_season_number:
+                last_air_date = _parse_iso_date(last_episode.get("air_date") or "")
+
+        return {
+            "ttcode": ttcode,
+            "latest_season_number": latest_season_number,
+            "latest_season_episode_count": latest_season_episode_count,
+            "season_air_date": season_air_date,
+            "last_air_date": last_air_date,
+            "note": (
+                f"Matched via TMDB (\"{candidate_name}\")."
+                if score >= 60
+                else f"Low-confidence TMDB match (\"{candidate_name}\")."
+            ),
+        }
+
 
     def _tmdb_tv_lookup(self, metacritic_row: dict[str, str]) -> dict[str, str | int] | None:
         title = (metacritic_row.get("Title Name", "") or "").strip()
