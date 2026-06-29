@@ -21,14 +21,23 @@ from app.services.http_client import HttpClient
 
 BOX_OFFICE_MOJO_CALENDAR_URL = "https://www.boxofficemojo.com/calendar/"
 BOX_OFFICE_MOJO_TITLE_URL = "https://www.boxofficemojo.com/title/"
+BOX_OFFICE_MOJO_WEEKEND_BY_DATE_URL = "https://www.boxofficemojo.com/weekend/by-date/"
 IMDB_SUGGESTION_URL = "https://v2.sg.media-imdb.com/suggestion/{first}/{query}.json"
 
 ProgressCallback = Callable[[int, str], None]
+
+# Regex patterns (built without inline backslash literals in edits).
+RELEASE_ID_PATTERN = "/release/(rl" + chr(92) + "d+)"
+NON_ALNUM_PATTERN = "[^a-z0-9]+"
+DIGITS_PATTERN = chr(92) + "d+"
 
 
 class BoxOfficeMojoService:
     def __init__(self, http_client: HttpClient) -> None:
         self.http_client = http_client
+        # Weekend chart rank lookups are cached by weekend-ending Sunday so a single
+        # run only fetches each weekend page once even when many films share a weekend.
+        self._weekend_rank_cache: dict[str, dict[str, dict[str, str]]] = {}
 
     def fetch_us_movie_releases(
         self,
@@ -351,20 +360,29 @@ class BoxOfficeMojoService:
         self,
         today: date | None = None,
         lookback_days: int = 7,
+        start_date: date | None = None,
+        end_date: date | None = None,
         progress: ProgressCallback | None = None,
     ) -> dict:
         today = today or date.today()
-        # Last `lookback_days` days, excluding today: e.g. on 2026-06-16 this covers
-        # 2026-06-09 through 2026-06-15.
-        end_date = today - timedelta(days=1)
-        start_date = today - timedelta(days=lookback_days)
+        # By default: last `lookback_days` days, excluding today. E.g. on 2026-06-16
+        # this covers 2026-06-09 through 2026-06-15. When an explicit start/end date
+        # range is supplied (from the date-range picker) those bounds are used as-is.
+        if start_date is None and end_date is None:
+            end_date = today - timedelta(days=1)
+            start_date = today - timedelta(days=lookback_days)
+        else:
+            start_date = start_date or (today - timedelta(days=lookback_days))
+            end_date = end_date or (today - timedelta(days=1))
+        if end_date < start_date:
+            raise ValueError("End date must be the same as or later than the start date.")
         calendar_url = urljoin(BOX_OFFICE_MOJO_CALENDAR_URL, f"{start_date.isoformat()}/")
 
         if progress:
-            progress(8, "Fetching Box Office Mojo schedule for the last week of US releases")
+            progress(8, "Fetching Box Office Mojo schedule for the selected US release window")
         html = self.http_client.get_text(calendar_url)
         if progress:
-            progress(25, "Parsing US movie releases from the last 7 days")
+            progress(25, f"Parsing US movie releases from {start_date.isoformat()} to {end_date.isoformat()}")
         calendar_rows = self.parse_calendar(html, start_date=start_date, end_date=end_date)
 
         total = max(len(calendar_rows), 1)
@@ -385,16 +403,16 @@ class BoxOfficeMojoService:
             "created_at": utc_now_iso(),
             "source_url": calendar_url,
             "summary": (
-                f"US theatrical releases from {start_date.isoformat()} through {end_date.isoformat()} "
-                f"(the last {lookback_days} days, excluding today), with each film's domestic opening box "
-                "office collection and opening theater count pulled from its Box Office Mojo release page "
-                "for the weekly ListenFirst update. Very recent releases may show blank figures until Box "
-                "Office Mojo posts opening numbers. Use the CSV or Excel export above to download the table."
+                f"US theatrical releases from {start_date.isoformat()} through {end_date.isoformat()}, "
+                "with each film's domestic opening box office collection, opening theater count, and its "
+                "domestic opening-weekend rank pulled from its Box Office Mojo release page and the matching "
+                "weekend chart for the weekly ListenFirst update. Very recent releases may show blank figures "
+                "until Box Office Mojo posts opening numbers. Use the CSV or Excel export above to download the table."
             ),
             "sections": [
                 {
                     "key": "boxoffice_recent_opening",
-                    "title": "Opening Collections & Theater Counts (Last 7 Days)",
+                    "title": f"Opening Collections, Theater Counts & Weekend Rank ({start_date.isoformat()} to {end_date.isoformat()})",
                     "columns": BOX_OFFICE_RECENT_OPENING_COLUMNS,
                     "rows": rows,
                     "row_count": len(rows),
@@ -410,6 +428,7 @@ class BoxOfficeMojoService:
             "Release Date": calendar_row.get("Release Date", ""),
             "Opening Gross": "",
             "Opening Theaters": "",
+            "Domestic Opening Weekend Rank": "",
             "Source URL": calendar_row.get("Source URL", ""),
         }
         source_url = row["Source URL"]
@@ -425,7 +444,53 @@ class BoxOfficeMojoService:
         row["Opening Theaters"] = _parse_theaters(opening_detail)
         if not row["Opening Theaters"]:
             row["Opening Theaters"] = _parse_theaters(_extract_detail_value(soup, "Widest Release"))
+        row["Domestic Opening Weekend Rank"] = self._domestic_opening_weekend_rank(row)
         return row
+
+    def _domestic_opening_weekend_rank(self, row: dict[str, str]) -> str:
+        """Look up the film's rank on the Box Office Mojo domestic weekend chart for
+        its opening weekend (the first Fri-Sun on/after the release date).
+
+        Box Office Mojo's weekend chart (/weekend/by-date/<sunday>/) lists every
+        title that earned domestic money that weekend, ranked by weekend gross. We
+        match the film to its row by its Box Office Mojo release id (rl#######) when
+        the source URL is a release page, otherwise by normalized title. Returns the
+        rank as a string (e.g. "3") or "" if it cannot be found.
+        """
+        release_date = _parse_iso_date(row.get("Release Date", ""))
+        if release_date is None:
+            return ""
+        sunday = _opening_weekend_sunday(release_date)
+        ranks = self._weekend_chart_ranks(sunday)
+        if not ranks:
+            return ""
+        release_id = _release_id_from_url(row.get("Source URL", ""))
+        if release_id and release_id in ranks["by_release"]:
+            return ranks["by_release"][release_id]
+        title_key = normalize_box_office_title(row.get("Title Name", ""))
+        if title_key and title_key in ranks["by_title"]:
+            return ranks["by_title"][title_key]
+        return ""
+
+    def _weekend_chart_ranks(self, sunday: date) -> dict[str, dict[str, str]]:
+        """Fetch + parse a weekend chart once, cached by weekend-ending Sunday.
+
+        Returns {"by_release": {release_id: rank}, "by_title": {title_key: rank}}.
+        """
+        cache_key = sunday.isoformat()
+        cached = self._weekend_rank_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        url = urljoin(BOX_OFFICE_MOJO_WEEKEND_BY_DATE_URL, f"{cache_key}/")
+        result: dict[str, dict[str, str]] = {"by_release": {}, "by_title": {}}
+        try:
+            html = self.http_client.get_text(url)
+        except Exception:
+            self._weekend_rank_cache[cache_key] = result
+            return result
+        result = _parse_weekend_chart_ranks(html)
+        self._weekend_rank_cache[cache_key] = result
+        return result
 
 
 def _first_release_link(cell):
@@ -495,6 +560,76 @@ def _parse_money(text: str) -> str:
 def _parse_theaters(text: str) -> str:
     match = re.search(r"([\d,]+)\s*theaters?", text or "", flags=re.IGNORECASE)
     return match.group(1) if match else ""
+
+
+def _opening_weekend_sunday(release_date: date) -> date:
+    """Return the Sunday that ends the film's opening weekend.
+
+    Box Office Mojo reports the opening figure for the first Friday-Sunday weekend.
+    For a Mon-Thu release the opening weekend is the upcoming Fri-Sun; for a Fri-Sun
+    release it is that same weekend.
+    """
+    weekday = release_date.weekday()  # Mon=0 .. Sun=6
+    if weekday <= 3:  # Mon-Thu -> the coming Friday
+        friday = release_date + timedelta(days=(4 - weekday))
+    elif weekday == 4:  # Friday
+        friday = release_date
+    else:  # Sat/Sun -> the Friday that started this weekend
+        friday = release_date - timedelta(days=(weekday - 4))
+    return friday + timedelta(days=2)
+
+
+def _release_id_from_url(url: str) -> str:
+    match = re.search(RELEASE_ID_PATTERN, str(url or ""), flags=re.IGNORECASE)
+    return match.group(1).lower() if match else ""
+
+
+def _parse_iso_date(value: str) -> date | None:
+    cleaned = _clean_text(str(value or ""))
+    if not cleaned:
+        return None
+    try:
+        return date.fromisoformat(cleaned[:10])
+    except ValueError:
+        return _try_parse_release_date(cleaned)
+
+
+def normalize_box_office_title(value: str) -> str:
+    text = _clean_text(str(value or "")).lower()
+    return re.sub(NON_ALNUM_PATTERN, " ", text).strip()
+
+
+def _parse_weekend_chart_ranks(html: str) -> dict[str, dict[str, str]]:
+    """Parse a Box Office Mojo weekend chart into rank lookups.
+
+    The weekend chart is a table whose first data column is the current-week rank and
+    whose release column links to /release/rl#######. We build two maps from it:
+    release id -> rank, and normalized title -> rank.
+    """
+    by_release: dict[str, str] = {}
+    by_title: dict[str, str] = {}
+    soup = BeautifulSoup(html, "html.parser")
+    for table_row in soup.find_all("tr"):
+        cells = table_row.find_all("td")
+        if len(cells) < 2:
+            continue
+        rank = _clean_text(cells[0].get_text(" ", strip=True))
+        if not re.fullmatch(DIGITS_PATTERN, rank):
+            continue
+        release_anchor = None
+        for anchor in table_row.find_all("a"):
+            if "/release/rl" in (anchor.get("href", "") or "").lower():
+                release_anchor = anchor
+                break
+        if release_anchor is None:
+            continue
+        release_id = _release_id_from_url(release_anchor.get("href", ""))
+        title_key = normalize_box_office_title(release_anchor.get_text(" ", strip=True))
+        if release_id and release_id not in by_release:
+            by_release[release_id] = rank
+        if title_key and title_key not in by_title:
+            by_title[title_key] = rank
+    return {"by_release": by_release, "by_title": by_title}
 
 
 def _domestic_release_url(soup: BeautifulSoup) -> str:

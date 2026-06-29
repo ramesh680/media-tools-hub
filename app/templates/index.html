@@ -34,6 +34,23 @@
   </fieldset>
 {% endmacro %}
 
+{% macro date_range_controls(legend, hint) %}
+  <fieldset class="date-controls">
+    <legend>{{ legend }}</legend>
+    {% if hint %}<p class="date-range-hint">{{ hint }}</p>{% endif %}
+    <div class="custom-date-row">
+      <label>
+        <span>Start</span>
+        <input type="date" name="custom_start_date" value="">
+      </label>
+      <label>
+        <span>End</span>
+        <input type="date" name="custom_end_date" value="">
+      </label>
+    </div>
+  </fieldset>
+{% endmacro %}
+
 {% block content %}
 <section class="hero-grid">
   <article class="hero-card">
@@ -148,8 +165,9 @@
     <article class="action-card">
       <p class="eyebrow">Box Office</p>
       <h3>Opening Box Office Lookup</h3>
-      <p>One click fetches every movie released in the U.S. over the last 7 days (excluding today) from Box Office Mojo, with each film's opening box office collection and theater count. Download the results as Excel or CSV for the weekly ListenFirst update.</p>
+      <p>One click fetches every movie released in the U.S. over the last 7 days (excluding today) from Box Office Mojo, with each film's opening box office collection, theater count, and domestic opening-weekend rank. Pick a custom date range to override the default last-7-days window. Download the results as Excel or CSV for the weekly ListenFirst update.</p>
       <form class="tracker-form" hx-post="/box-office-weekly-openings/start" hx-target="#workspace" hx-swap="outerHTML">
+        {{ date_range_controls("Date range (optional)", "Leave blank for the last 7 days (excluding today).") }}
         <button class="primary-button" type="submit">Fetch Opening Box Office</button>
       </form>
     </article>
@@ -157,8 +175,9 @@
     <article class="action-card">
       <p class="eyebrow">Box Office</p>
       <h3>Release Schedule Changes</h3>
-      <p>Compares recent Box Office Mojo schedules to surface movies whose release dates have shifted.</p>
+      <p>Compares recent Box Office Mojo schedules to surface movies whose release dates have shifted. Pick a custom date range to override the default window (last 7 days through the next 30 days).</p>
       <form class="tracker-form" hx-post="/release-schedule-changes/start" hx-target="#workspace" hx-swap="outerHTML">
+        {{ date_range_controls("Date range (optional)", "Leave blank for last 7 days through next 30 days.") }}
         <button class="primary-button" type="submit">Fetch Release Schedule Changes</button>
       </form>
     </article>

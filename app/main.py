@@ -450,11 +450,20 @@ async def start_box_office_mojo_movies(request: Request) -> HTMLResponse:
 
 @app.post("/box-office-weekly-openings/start", response_class=HTMLResponse)
 async def start_box_office_weekly_openings(request: Request) -> HTMLResponse:
+    date_range = await _optional_date_range_from_request(request)
+    if isinstance(date_range, HTMLResponse):
+        return date_range
+    start_date, end_date = date_range
     job = job_manager.start(
         "boxoffice_recent_opening",
-        lambda progress: box_office_service.fetch_recent_us_opening(
-            lookback_days=7,
-            progress=progress,
+        lambda progress: _with_imdb_ttcodes(
+            box_office_service.fetch_recent_us_opening(
+                lookback_days=7,
+                start_date=start_date,
+                end_date=end_date,
+                progress=progress,
+            ),
+            progress,
         ),
     )
     return _progress_response(request, job.to_dict())
@@ -462,9 +471,12 @@ async def start_box_office_weekly_openings(request: Request) -> HTMLResponse:
 
 @app.post("/release-schedule-changes/start", response_class=HTMLResponse)
 async def start_release_schedule_changes(request: Request) -> HTMLResponse:
+    date_range = await _optional_date_range_from_request(request)
+    if isinstance(date_range, HTMLResponse):
+        return date_range
     today = date.today()
-    start_date = today - timedelta(days=RELEASE_SCHEDULE_CHANGE_PAST_DAYS)
-    end_date = today + timedelta(days=RELEASE_SCHEDULE_CHANGE_FUTURE_DAYS)
+    start_date = date_range[0] or (today - timedelta(days=RELEASE_SCHEDULE_CHANGE_PAST_DAYS))
+    end_date = date_range[1] or (today + timedelta(days=RELEASE_SCHEDULE_CHANGE_FUTURE_DAYS))
     job = job_manager.start(
         "release_schedule_changes",
         lambda progress: _with_imdb_ttcodes(
@@ -737,6 +749,37 @@ def _error_response(request: Request, title: str, message: str) -> HTMLResponse:
             "message": message,
         },
     )
+
+
+async def _optional_date_range_from_request(
+    request: Request,
+) -> tuple[date | None, date | None] | HTMLResponse:
+    """Parse an optional start/end date range from a posted form.
+
+    Both ``custom_start_date`` and ``custom_end_date`` are optional. When both are
+    blank the caller falls back to its own default window; when supplied they are
+    validated for format and ordering. Returns a ``(start, end)`` tuple (either may
+    be ``None``) or an error response.
+    """
+    form = _decode_urlencoded_form(await request.body())
+    raw_start = (form.get("custom_start_date", "") or "").strip()
+    raw_end = (form.get("custom_end_date", "") or "").strip()
+    try:
+        start_date = date.fromisoformat(raw_start) if raw_start else None
+        end_date = date.fromisoformat(raw_end) if raw_end else None
+    except ValueError:
+        return _error_response(
+            request,
+            "Invalid date range",
+            "Custom dates must use YYYY-MM-DD format.",
+        )
+    if start_date and end_date and end_date < start_date:
+        return _error_response(
+            request,
+            "Invalid date range",
+            "Custom end date must be the same as or later than the start date.",
+        )
+    return start_date, end_date
 
 
 async def _date_window_from_request(request: Request) -> dict[str, date] | HTMLResponse:
