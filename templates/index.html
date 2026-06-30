@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-content">
+      <div class="platform-badge">Yearly Data & Tools Platform</div>
+      <h1>Access Curated Data, <span class="hero-highlight">Instantly</span></h1>
+      <p class="lede">Discover and access comprehensive datasets across healthcare, education, finance, and more. Search by use case, filter by category, and integrate ready-to-use data into your workflows in seconds.</p>
+
+      <div class="features-grid">
+        <div class="feature-item">
+          <span class="feature-icon">🔍</span>
+          <span class="feature-text">Smart Search & Discovery</span>
+        </div>
+        <div class="feature-item">
+          <span class="feature-icon">✓</span>
+          <span class="feature-text">Verified Data Sources</span>
+        </div>
+        <div class="feature-item">
+          <span class="feature-icon">⬇️</span>
+          <span class="feature-text">Export as CSV or Excel</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Content -->
+  <div class="container">
+    <!-- Search Section -->
+    <div class="search-section">
+      <div class="search-bar">
+        <input
+          type="text"
+          class="search-input"
+          id="searchInput"
+          placeholder="Search by tool name, use case, or category..."
+          onkeyup="filterTools()"
+        >
+      </div>
+    </div>
+
+    <!-- Category Tabs -->
+    <div class="category-tabs">
+      <button class="tab-btn active" data-filter="all" onclick="filterByCategory('all')">All Tools</button>
+      <button class="tab-btn" data-filter="healthcare" onclick="filterByCategory('healthcare')">Healthcare</button>
+      <button class="tab-btn" data-filter="education" onclick="filterByCategory('education')">Education</button>
+      <button class="tab-btn" data-filter="finance" onclick="filterByCategory('finance')">Finance</button>
+      <button class="tab-btn" data-filter="insurance" onclick="filterByCategory('insurance')">Insurance</button>
+      <button class="tab-btn" data-filter="sports" onclick="filterByCategory('sports')">Sports</button>
+      <button class="tab-btn" data-filter="streaming" onclick="filterByCategory('streaming')">Streaming</button>
+      <button class="tab-btn" data-filter="beauty" onclick="filterByCategory('beauty')">Beauty</button>
+    </div>
+
+    <!-- Tools Container (grouped by section) -->
+    <div id="toolsContainer">
+      {% set cats = ['Healthcare', 'Education', 'Finance', 'Insurance', 'Sports', 'Streaming', 'Beauty'] %}
+      {% for cat in cats %}
+        {% set cat_tools = tools | selectattr('category', 'equalto', cat) | list %}
+        {% if cat_tools %}
+          <section class="category-section" data-category="{{ cat.lower() }}">
+            <h2 class="category-header">{{ cat }}</h2>
+            <div class="grid">
+              {% for tool in cat_tools %}
+                <article
+                  class="card tool-card"
+                  data-category="{{ tool.category.lower() }}"
+                  data-title="{{ tool.title.lower() }}"
+                  data-description="{{ tool.description.lower() }}"
+                >
+                  <span class="cat">{{ tool.category }}</span>
+                  <h3>{{ tool.title }}</h3>
+                  <p>{{ tool.description }}</p>
+                  {% if tool.available %}
+                    <a class="btn" href="{{ url_for(tool.endpoint) }}">Open {{ tool.title }}</a>
+                  {% else %}
+                    <span class="btn disabled">Coming soon</span>
+                  {% endif %}
+                </article>
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+    let currentFilter = 'all';
+
+    function filterByCategory(category) {
+      currentFilter = category;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelector(`[data-filter="${category}"]`).classList.add('active');
+      applyFilters();
+    }
+
+    function filterTools() {
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+      const sections = document.querySelectorAll('.category-section');
+      let totalVisible = 0;
+
+      sections.forEach(section => {
+        const cards = section.querySelectorAll('.tool-card');
+        let sectionVisible = 0;
+
+        cards.forEach(card => {
+          const category = card.dataset.category;
+          const title = card.dataset.title || '';
+          const description = card.dataset.description || '';
+
+          const categoryMatch = currentFilter === 'all' || category === currentFilter;
+          const searchMatch =
+            searchTerm === '' ||
+            title.includes(searchTerm) ||
+            description.includes(searchTerm);
+
+          if (categoryMatch && searchMatch) {
+            card.style.display = '';
+            sectionVisible++;
+          } else {
+            card.style.display = 'none';
+          }
+        });
+
+        // Hide the whole section (header included) when it has no visible cards
+        section.style.display = sectionVisible > 0 ? 'block' : 'none';
+        totalVisible += sectionVisible;
+      });
+
+      // Empty state
+      const container = document.getElementById('toolsContainer');
+      let emptyState = container.querySelector('.empty-state');
+
+      if (totalVisible === 0) {
+        if (!emptyState) {
+          emptyState = document.createElement('div');
+          emptyState.className = 'empty-state';
+          emptyState.innerHTML = `
+            <div class="empty-state-icon">🔍</div>
+            <p>No tools found. Try adjusting your search or filter.</p>
+          `;
+          container.appendChild(emptyState);
+        }
+        emptyState.style.display = 'block';
+      } else if (emptyState) {
+        emptyState.style.display = 'none';
+      }
+    }
+  </script>
+{% endblock %}
