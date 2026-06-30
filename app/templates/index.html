@@ -1,195 +1,155 @@
 {% extends "base.html" %}
 
-{% macro date_window_controls(today_iso) %}
-  <fieldset class="date-controls">
-    <legend>Date window</legend>
-    <div class="range-options" role="radiogroup" aria-label="Date window">
-      <label class="range-option">
-        <input type="radio" name="date_window" value="current" checked>
-        <span>Current date</span>
-      </label>
-      <label class="range-option">
-        <input type="radio" name="date_window" value="next_7">
-        <span>Next 7 days</span>
-      </label>
-      <label class="range-option">
-        <input type="radio" name="date_window" value="one_year">
-        <span>One year</span>
-      </label>
-      <label class="range-option">
-        <input type="radio" name="date_window" value="custom">
-        <span>Custom date range</span>
-      </label>
-    </div>
-    <div class="custom-date-row">
-      <label>
-        <span>Start</span>
-        <input type="date" name="custom_start_date" value="{{ today_iso }}">
-      </label>
-      <label>
-        <span>End</span>
-        <input type="date" name="custom_end_date" value="{{ today_iso }}">
-      </label>
-    </div>
-  </fieldset>
-{% endmacro %}
-
-{% macro date_range_controls(legend, hint) %}
-  <fieldset class="date-controls">
-    <legend>{{ legend }}</legend>
-    {% if hint %}<p class="date-range-hint">{{ hint }}</p>{% endif %}
-    <div class="custom-date-row">
-      <label>
-        <span>Start</span>
-        <input type="date" name="custom_start_date" value="">
-      </label>
-      <label>
-        <span>End</span>
-        <input type="date" name="custom_end_date" value="">
-      </label>
-    </div>
-  </fieldset>
-{% endmacro %}
-
 {% block content %}
-<section class="hero-grid">
-  <article class="hero-card">
-    <p class="eyebrow">Team Tools</p>
-    <h1>Media Data Tools Hub</h1>
-    <p>A shared home for the team's data tools. Pick a tool below to get started. Today is {{ today_iso }}.</p>
-  </article>
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-content">
+      <div class="platform-badge">Yearly Data & Tools Platform</div>
+      <h1>Access Curated Data, <span class="hero-highlight">Instantly</span></h1>
+      <p class="lede">Discover and access comprehensive datasets across healthcare, education, finance, and more. Search by use case, filter by category, and integrate ready-to-use data into your workflows in seconds.</p>
 
-  <aside class="tracking-card" aria-label="Available tools">
-    <p class="eyebrow">What's here</p>
-    <ul>
-      <li><strong>Excel Validator:</strong> upload a workbook and check it against your rules</li>
-      <li><strong>YouTube Release Verifier:</strong> verify titles against official YouTube channels</li>
-      <li><strong>Upcoming Release Movies:</strong> live upcoming theatrical release list</li>
-      <li><strong>Exports:</strong> CSV and Excel downloads</li>
-    </ul>
-  </aside>
-</section>
-
-<section class="app-panel" aria-label="Tools panel">
-  <div class="panel-heading">
-    <div>
-      <p class="eyebrow">Tools</p>
-      <h2>Choose a tool</h2>
+      <div class="features-grid">
+        <div class="feature-item">
+          <span class="feature-icon">🔍</span>
+          <span class="feature-text">Smart Search & Discovery</span>
+        </div>
+        <div class="feature-item">
+          <span class="feature-icon">✓</span>
+          <span class="feature-text">Verified Data Sources</span>
+        </div>
+        <div class="feature-item">
+          <span class="feature-icon">⬇️</span>
+          <span class="feature-text">Export as CSV or Excel</span>
+        </div>
+      </div>
     </div>
-    <p>Available to the whole team. No login required.</p>
-  </div>
-
-  <section class="action-stack" aria-label="Tools">
-    <article class="action-card">
-      <p class="eyebrow">Spreadsheets</p>
-      <h3>Excel Validator</h3>
-      <p>Upload an XLSX or CSV workbook and validate it against your rules and checkpoints. Failed cells are flagged and you can download the reviewed file.</p>
-      <a class="primary-button" href="/excel-validator">Open Excel Validator</a>
-    </article>
-
-    <article class="action-card">
-      <p class="eyebrow">YouTube</p>
-      <h3>YouTube Release Verifier</h3>
-      <p>Check movie and TV title lists against official-channel trailer videos, publish dates, and URLs.</p>
-      <a class="primary-button" href="/youtube-release-verifier">Open YouTube Release Verifier</a>
-    </article>
-
-    <article class="action-card">
-      <p class="eyebrow">Billboard</p>
-      <h3>Artist 100 - New Entries (LW = "-")</h3>
-      <p>Scrape the Billboard Artist 100 (any date) and download an Excel of just the artists whose Last Week is a dash - new or re-entering acts.</p>
-      <a class="primary-button" href="/billboard-new-entries">Open Billboard New Entries</a>
-    </article>
-
-    {% if upcoming_movies_url %}
-    <article class="action-card">
-      <p class="eyebrow">Movies</p>
-      <h3>Upcoming Release Movies</h3>
-      <p>Live list of upcoming theatrical movie releases with dates and links, scraped on demand.</p>
-      <a class="primary-button" href="{{ upcoming_movies_url }}" target="_blank" rel="noopener">Open Upcoming Release Movies</a>
-    </article>
-    {% endif %}
-
-    <article class="action-card">
-      <p class="eyebrow">TV</p>
-      <h3>TV Premiere Calendar</h3>
-      <p>Scrapes Metacritic's TV premiere calendar for the selected window and splits it into daily and ranged views.</p>
-      <form class="tracker-form" hx-post="/tv-premiere-calendar/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_window_controls(today_iso) }}
-        <button class="primary-button" type="submit">Fetch TV Premiere Calendar</button>
-      </form>
-    </article>
-
-    {% if imdb_enabled or tmdb_enabled %}
-    <article class="action-card">
-      <p class="eyebrow">IMDb Enrichment</p>
-      <h3>Daily - TV Season and Episode Data Review</h3>
-      <p>Fetches Metacritic's TV Premiere Calendar for the selected date window, excludes $, Rent/Buy, Movie, and Special rows, then enriches the remaining titles with IMDb ttcode, total seasons, and total episodes.{% if not imdb_enabled %} On this hosted version the season/episode counts and ttcode come from the TMDB API.{% endif %}</p>
-      <form class="tracker-form" hx-post="/tv-premiere-imdb-series/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_window_controls(today_iso) }}
-        <button class="primary-button" type="submit">Fetch IMDb-Enriched Series</button>
-      </form>
-    </article>
-    {% endif %}
-
-    <article class="action-card">
-      <p class="eyebrow">Movies</p>
-      <h3>Movie Release Calendar</h3>
-      <p>Scrapes Metacritic's movie release calendar for the selected window.</p>
-      <form class="tracker-form" hx-post="/movie-release-calendar/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_window_controls(today_iso) }}
-        <button class="primary-button" type="submit">Fetch Movie Release Calendar</button>
-      </form>
-    </article>
-
-    <article class="action-card">
-      <p class="eyebrow">Games</p>
-      <h3>Game Release Calendar</h3>
-      <p>Scrapes Metacritic's game release schedule for the selected window.</p>
-      <form class="tracker-form" hx-post="/game-release-calendar/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_window_controls(today_iso) }}
-        <button class="primary-button" type="submit">Fetch Game Release Calendar</button>
-      </form>
-    </article>
-
-    <article class="action-card">
-      <p class="eyebrow">Box Office</p>
-      <h3>Box Office Mojo Movies</h3>
-      <p>Scrapes Box Office Mojo's US release schedule for the selected window.</p>
-      <form class="tracker-form" hx-post="/box-office-mojo-movies/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_window_controls(today_iso) }}
-        <button class="primary-button" type="submit">Fetch Box Office Mojo Movies</button>
-      </form>
-    </article>
-
-    <article class="action-card">
-      <p class="eyebrow">Box Office</p>
-      <h3>Opening Box Office Lookup</h3>
-      <p>One click fetches every movie released in the U.S. over the last 7 days (excluding today) from Box Office Mojo, with each film's opening box office collection, theater count, and domestic opening-weekend rank. Pick a custom date range to override the default last-7-days window. Download the results as Excel or CSV for the weekly ListenFirst update.</p>
-      <form class="tracker-form" hx-post="/box-office-weekly-openings/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_range_controls("Date range (optional)", "Leave blank for the last 7 days (excluding today).") }}
-        <button class="primary-button" type="submit">Fetch Opening Box Office</button>
-      </form>
-    </article>
-
-    <article class="action-card">
-      <p class="eyebrow">Box Office</p>
-      <h3>Release Schedule Changes</h3>
-      <p>Compares recent Box Office Mojo schedules to surface movies whose release dates have shifted. Pick a custom date range to override the default window (last 7 days through the next 30 days).</p>
-      <form class="tracker-form" hx-post="/release-schedule-changes/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_range_controls("Date range (optional)", "Leave blank for last 7 days through next 30 days.") }}
-        <button class="primary-button" type="submit">Fetch Release Schedule Changes</button>
-      </form>
-    </article>
   </section>
 
-  {% if not imdb_enabled %}
-  <p class="panel-note">Note: the release calendars above run without IMDb enrichment on this hosted version (no IMDb ttcodes, and no TV season/episode counts) because that data needs a multi-gigabyte local IMDb index. The IMDb-only tools (TV seasons &amp; episodes, IMDb bulk verifier) and full enrichment run in the local install. Calendar data is scraped live, so results depend on the source sites being reachable.</p>
-  {% endif %}
-</section>
+  <!-- Main Content -->
+  <div class="container">
+    <!-- Search Section -->
+    <div class="search-section">
+      <div class="search-bar">
+        <input
+          type="text"
+          class="search-input"
+          id="searchInput"
+          placeholder="Search by tool name, use case, or category..."
+          onkeyup="filterTools()"
+        >
+      </div>
+    </div>
 
-<section id="workspace" class="workspace workspace-empty">
-  <h2>Pick a tool above</h2>
-  <p>Select Excel Validator or YouTube Release Verifier to begin.</p>
-</section>
+    <!-- Category Tabs -->
+    <div class="category-tabs">
+      <button class="tab-btn active" data-filter="all" onclick="filterByCategory('all')">All Tools</button>
+      <button class="tab-btn" data-filter="healthcare" onclick="filterByCategory('healthcare')">Healthcare</button>
+      <button class="tab-btn" data-filter="education" onclick="filterByCategory('education')">Education</button>
+      <button class="tab-btn" data-filter="finance" onclick="filterByCategory('finance')">Finance</button>
+      <button class="tab-btn" data-filter="insurance" onclick="filterByCategory('insurance')">Insurance</button>
+      <button class="tab-btn" data-filter="sports" onclick="filterByCategory('sports')">Sports</button>
+      <button class="tab-btn" data-filter="streaming" onclick="filterByCategory('streaming')">Streaming</button>
+      <button class="tab-btn" data-filter="beauty" onclick="filterByCategory('beauty')">Beauty</button>
+    </div>
+
+    <!-- Tools Container (grouped by section) -->
+    <div id="toolsContainer">
+      {% set cats = ['Healthcare', 'Education', 'Finance', 'Insurance', 'Sports', 'Streaming', 'Beauty'] %}
+      {% for cat in cats %}
+        {% set cat_tools = tools | selectattr('category', 'equalto', cat) | list %}
+        {% if cat_tools %}
+          <section class="category-section" data-category="{{ cat.lower() }}">
+            <h2 class="category-header">{{ cat }}</h2>
+            <div class="grid">
+              {% for tool in cat_tools %}
+                <article
+                  class="card tool-card"
+                  data-category="{{ tool.category.lower() }}"
+                  data-title="{{ tool.title.lower() }}"
+                  data-description="{{ tool.description.lower() }}"
+                >
+                  <span class="cat">{{ tool.category }}</span>
+                  <h3>{{ tool.title }}</h3>
+                  <p>{{ tool.description }}</p>
+                  {% if tool.available %}
+                    <a class="btn" href="{{ url_for(tool.endpoint) }}">Open {{ tool.title }}</a>
+                  {% else %}
+                    <span class="btn disabled">Coming soon</span>
+                  {% endif %}
+                </article>
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+    let currentFilter = 'all';
+
+    function filterByCategory(category) {
+      currentFilter = category;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelector(`[data-filter="${category}"]`).classList.add('active');
+      applyFilters();
+    }
+
+    function filterTools() {
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+      const sections = document.querySelectorAll('.category-section');
+      let totalVisible = 0;
+
+      sections.forEach(section => {
+        const cards = section.querySelectorAll('.tool-card');
+        let sectionVisible = 0;
+
+        cards.forEach(card => {
+          const category = card.dataset.category;
+          const title = card.dataset.title || '';
+          const description = card.dataset.description || '';
+
+          const categoryMatch = currentFilter === 'all' || category === currentFilter;
+          const searchMatch =
+            searchTerm === '' ||
+            title.includes(searchTerm) ||
+            description.includes(searchTerm);
+
+          if (categoryMatch && searchMatch) {
+            card.style.display = '';
+            sectionVisible++;
+          } else {
+            card.style.display = 'none';
+          }
+        });
+
+        // Hide the whole section (header included) when it has no visible cards
+        section.style.display = sectionVisible > 0 ? 'block' : 'none';
+        totalVisible += sectionVisible;
+      });
+
+      // Empty state
+      const container = document.getElementById('toolsContainer');
+      let emptyState = container.querySelector('.empty-state');
+
+      if (totalVisible === 0) {
+        if (!emptyState) {
+          emptyState = document.createElement('div');
+          emptyState.className = 'empty-state';
+          emptyState.innerHTML = `
+            <div class="empty-state-icon">🔍</div>
+            <p>No tools found. Try adjusting your search or filter.</p>
+          `;
+          container.appendChild(emptyState);
+        }
+        emptyState.style.display = 'block';
+      } else if (emptyState) {
+        emptyState.style.display = 'none';
+      }
+    }
+  </script>
 {% endblock %}
