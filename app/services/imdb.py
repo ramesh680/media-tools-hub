@@ -194,9 +194,10 @@ class IMDbEnrichmentService:
             f"Filtered rows: {len(filtered_rows)}. Matched to IMDb: {matched}. "
             "Release date and season start date use the season premiere when the Metacritic row links to a "
             "season or episode page; otherwise they use the calendar row date. latest_season_episode_count "
-            "counts only the matched latest season, not all episodes across the full series. The end date uses "
-            "a later dated episode/finale from Metacritic details when available; otherwise it defaults to "
-            "30 days after the start date."
+            "counts only the matched latest season, not all episodes across the full series. The end date "
+            "follows the episode-release rules: episodes on a single day give start date + 30 days, episodes "
+            "on different days give the last episode date, and the end date is left blank when no episode "
+            "date is available."
         )
         return {
             "tracker_type": "tv_seasons",
@@ -358,9 +359,9 @@ class IMDbEnrichmentService:
             f"Scanned Metacritic TV rows from {start_date.isoformat()} through {end_date.isoformat()}. "
             f"Filtered rows: {len(filtered_rows)}. Matched on TMDB: {matched}. "
             "The IMDb ttcode, latest season number, and latest_season_episode_count come from the TMDB "
-            "API (free-tier source; no local IMDb index). Season start/end dates prefer the Metacritic "
-            "season premiere or TMDB air dates and otherwise default to the calendar row date through "
-            "30 days later. A few obscure or ambiguous titles may be blank when TMDB has no confident match."
+            "API (free-tier source; no local IMDb index). The end date follows the episode-release rules: "
+            "episodes on a single day give start date + 30 days, episodes on different days give the last "
+            "episode date, and the end date is left blank when no episode date is available."
         )
         return {
             "tracker_type": "tv_seasons",
@@ -416,10 +417,15 @@ class IMDbEnrichmentService:
             _episode_count_from_details(metacritic_row, season_number),
             _known_episode_count_override(metacritic_row, season_number),
         )
-        season_end_date = (
-            (lookup.get("last_air_date") if lookup else None)
-            or metacritic_end_date
-            or _infer_season_end_date(season_start_date, metacritic_row)
+        season_end_date = _season_end_date_for_row(
+            metacritic_row,
+            season_start_date,
+            known_episode_dates=(
+                metacritic_start_date,
+                metacritic_end_date,
+                (lookup.get("season_air_date") if lookup else None),
+                (lookup.get("last_air_date") if lookup else None),
+            ),
         )
         return {
             "release_date": _display_date(season_start_date),
@@ -433,7 +439,7 @@ class IMDbEnrichmentService:
             "latest_season_number": season_number or "",
             "latest_season_episode_count": episode_count or "",
             "latest_season_start_date": _display_date(season_start_date),
-            "latest_season_end_date": _display_date(season_end_date),
+            "latest_season_end_date": _display_date_or_blank(season_end_date),
         }
 
     def _tmdb_tv_season_lookup(
@@ -1179,8 +1185,12 @@ class IMDbEnrichmentService:
                 "latest_season_number": season_number or "",
                 "latest_season_episode_count": episode_count or "",
                 "latest_season_start_date": _display_date(season_start_date),
-                "latest_season_end_date": _display_date(
-                    metacritic_end_date or _infer_season_end_date(season_start_date, metacritic_row)
+                "latest_season_end_date": _display_date_or_blank(
+                    _season_end_date_for_row(
+                        metacritic_row,
+                        season_start_date,
+                        known_episode_dates=(metacritic_start_date, metacritic_end_date),
+                    )
                 ),
             }
 
@@ -1211,7 +1221,11 @@ class IMDbEnrichmentService:
             imdb_web_episode_count,
             _known_episode_count_override(metacritic_row, season_number),
         )
-        season_end_date = metacritic_end_date or _infer_season_end_date(season_start_date, metacritic_row)
+        season_end_date = _season_end_date_for_row(
+            metacritic_row,
+            season_start_date,
+            known_episode_dates=(metacritic_start_date, metacritic_end_date),
+        )
         return {
             "release_date": _display_date(season_start_date),
             "title": metacritic_row.get("Title Name", ""),
@@ -1224,7 +1238,7 @@ class IMDbEnrichmentService:
             "latest_season_number": season_number or "",
             "latest_season_episode_count": episode_count or "",
             "latest_season_start_date": _display_date(season_start_date),
-            "latest_season_end_date": _display_date(season_end_date),
+            "latest_season_end_date": _display_date_or_blank(season_end_date),
         }
 
     def _select_series_candidate(self, connection: sqlite3.Connection, metacritic_row: dict[str, str]):
@@ -1864,21 +1878,52 @@ def _number_word_or_int(value: str) -> int:
     }.get(value, 0)
 
 
-def _infer_season_end_date(start_date: date, metacritic_row: dict[str, str]) -> date:
+def _resolve_season_end_date(
+    start_date: date | None,
+    episode_dates: Iterable[date | None],
+) -> date | None:
+    """Compute the season end date from the available episode dates.
+
+    Rules (for the TV Season and Episode Data Review tool):
+      1. Available episodes (one or many) all released on a SINGLE day
+             -> end date = start date + 30 days
+      2. Episodes released on DIFFERENT dates
+             -> end date = the last (latest) episode date
+      3. No episode date available
+             -> end date = blank (None)
+    """
+    distinct = sorted({item for item in episode_dates if item is not None})
+    if not distinct:
+        # Rule 3 - nothing to derive an end date from.
+        return None
+    if len(distinct) > 1:
+        # Rule 2 - staggered releases; the last episode date is the end date.
+        return distinct[-1]
+    # Rule 1 - every known episode is on a single day.
+    base = start_date or distinct[0]
+    return base + timedelta(days=30)
+
+
+def _season_end_date_for_row(
+    metacritic_row: dict[str, str],
+    season_start_date: date,
+    known_episode_dates: Iterable[date | None] = (),
+) -> date | None:
+    """Gather every episode date known for the row and apply the end-date rules.
+
+    Episode dates come from the caller (Metacritic season page and/or TMDB air
+    dates) plus any dates parsed from the Metacritic detail text. When no
+    episode date is available anywhere, the end date is left blank (Rule 3).
+    """
     detail_text = " ".join(
         [
             metacritic_row.get("Other Details", ""),
             metacritic_row.get("Availability / Network", ""),
         ]
     )
-    explicit_end = _extract_explicit_end_date(detail_text, start_date)
-    if explicit_end and explicit_end > start_date:
-        return explicit_end
-    episode_dates = _extract_episode_release_dates(detail_text, start_date)
-    unique_dates = sorted({item for item in episode_dates if item >= start_date})
-    if len(unique_dates) > 1 and unique_dates[-1] > unique_dates[0]:
-        return unique_dates[-1]
-    return start_date + timedelta(days=30)
+    collected: list[date | None] = [item for item in known_episode_dates]
+    collected.extend(_extract_episode_release_dates(detail_text, season_start_date))
+    return _resolve_season_end_date(season_start_date, collected)
 
 
 def _parse_iso_date(value: str) -> date | None:
@@ -1929,3 +1974,7 @@ def _extract_explicit_end_date(text: str, start_date: date) -> date | None:
 
 def _display_date(value: date) -> str:
     return value.strftime("%d-%m-%Y")
+
+
+def _display_date_or_blank(value: date | None) -> str:
+    return value.strftime("%d-%m-%Y") if value else ""
