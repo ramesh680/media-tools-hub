@@ -28,7 +28,6 @@ from app.services.validator_history import ValidatorHistoryRepository
 from app.services.validator_jobs import ValidatorJobManager
 from app.services.youtube_release_verifier import YouTubeReleaseVerifierService
 
-
 settings = get_settings()
 history_repository = HistoryRepository(settings.database_path)
 validator_history_repository = ValidatorHistoryRepository(settings.database_path)
@@ -69,8 +68,6 @@ from app.billboard_new_entries import router as billboard_new_entries_router  # 
 app.include_router(billboard_new_entries_router)
 
 RELEASE_SCHEDULE_CHANGE_HISTORY_LOOKBACK_DAYS = 14
-RELEASE_SCHEDULE_CHANGE_PAST_DAYS = 7
-RELEASE_SCHEDULE_CHANGE_FUTURE_DAYS = 30
 
 
 @app.on_event("startup")
@@ -202,7 +199,6 @@ async def validate_excel(
         source_label = f"{filename} + Google Sheet reference"
     if rules_file and rules_file.filename:
         source_label = f"{source_label} + {rules_file.filename}"
-
     job = validator_job_manager.start(
         lambda progress: _run_excel_validation_job(
             content,
@@ -476,8 +472,10 @@ async def start_release_schedule_changes(request: Request) -> HTMLResponse:
     if isinstance(date_range, HTMLResponse):
         return date_range
     today = date.today()
-    start_date = date_range[0] or (today - timedelta(days=RELEASE_SCHEDULE_CHANGE_PAST_DAYS))
-    end_date = date_range[1] or (today + timedelta(days=RELEASE_SCHEDULE_CHANGE_FUTURE_DAYS))
+    # Case 1 (single day / nothing picked): from the start day forward 12 months.
+    # Case 2 (explicit range): honour the exact start and end that were entered.
+    start_date = date_range[0] or today
+    end_date = date_range[1] or _add_one_year(start_date)
     job = job_manager.start(
         "release_schedule_changes",
         lambda progress: _with_imdb_ttcodes(
@@ -512,7 +510,6 @@ def progress(request: Request, job_id: str) -> HTMLResponse:
             "Tracker run expired",
             "This in-memory job expired. Completed runs can still be opened from Recent tracker runs.",
         )
-
     job_dict = job.to_dict()
     if job.status == "completed" and job.result:
         snapshot = export_service.register_snapshot_exports(_ensure_metacritic_links(deepcopy(job.result)))
@@ -698,7 +695,6 @@ def _ensure_metacritic_links(snapshot: dict) -> dict:
     tracker_type = snapshot.get("tracker_type", "")
     if tracker_type not in {"tv", "imdb", "tv_seasons", "game", "movie"}:
         return snapshot
-
     if tracker_type == "game":
         default_media_type = "game"
     elif tracker_type == "movie":
@@ -709,7 +705,6 @@ def _ensure_metacritic_links(snapshot: dict) -> dict:
         columns = section.get("columns")
         if not isinstance(columns, list):
             continue
-
         if tracker_type == "tv_seasons":
             _ensure_column(columns, "metacritic_url", after="imdb_id")
             for row in section.get("rows", []):
@@ -722,7 +717,6 @@ def _ensure_metacritic_links(snapshot: dict) -> dict:
                     default_media_type=default_media_type,
                 )
             continue
-
         _ensure_column(columns, "Metacritic URL", after="Source URL")
         for row in section.get("rows", []):
             row["Metacritic URL"] = row.get("Metacritic URL") or metacritic_url_for_row(
@@ -750,6 +744,19 @@ def _error_response(request: Request, title: str, message: str) -> HTMLResponse:
             "message": message,
         },
     )
+
+
+def _add_one_year(value: date) -> date:
+    """Return the same calendar date 12 months later.
+
+    Uses a true calendar year (same month/day next year) rather than a fixed
+    365-day delta so leap years stay correct. Feb 29 rolls back to Feb 28 when
+    the following year is not a leap year.
+    """
+    try:
+        return value.replace(year=value.year + 1)
+    except ValueError:
+        return value.replace(year=value.year + 1, month=2, day=28)
 
 
 async def _optional_date_range_from_request(
@@ -811,7 +818,6 @@ def _resolve_date_window(window: str, custom_start: str, custom_end: str) -> dic
         return {"start_date": today, "end_date": today + timedelta(days=365)}
     if window != "custom":
         raise ValueError("Choose Current date, Next 7 days, One year, or Custom date range.")
-
     if not custom_start or not custom_end:
         raise ValueError("Custom date range needs both a start date and an end date.")
     try:
