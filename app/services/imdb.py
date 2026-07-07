@@ -138,7 +138,7 @@ class IMDbEnrichmentService:
                 {
                     "key": "imdb",
                     "title": "IMDb-Enriched TV Series Snapshot",
-                    "columns": IMDB_COLUMNS,
+                    "columns": _imdb_columns_with_end_date(),
                     "rows": enriched,
                     "row_count": len(enriched),
                     "supports_google": False,
@@ -274,7 +274,20 @@ class IMDbEnrichmentService:
                     note = omdb_result.get("note", note)
             if ttcode:
                 matched += 1
-            enriched.append(self._output_row(row, ttcode, total_seasons, total_episodes, note))
+            season_start = _parse_iso_date(row.get("Release Date", "")) or date.today()
+            end_disp = _display_date_or_blank(
+                _season_end_date_for_row(
+                    row,
+                    season_start,
+                    known_episode_dates=(
+                        result.get("season_air_date") if result else None,
+                        result.get("last_air_date") if result else None,
+                    ),
+                )
+            )
+            enriched.append(
+                self._output_row(row, ttcode, total_seasons, total_episodes, note, end_date_display=end_disp)
+            )
 
         summary = (
             f"Scanned Metacritic TV rows from {start_date.isoformat()} through {end_date.isoformat()}. "
@@ -293,7 +306,7 @@ class IMDbEnrichmentService:
                 {
                     "key": "imdb",
                     "title": "IMDb-Enriched TV Series Snapshot",
-                    "columns": IMDB_COLUMNS,
+                    "columns": _imdb_columns_with_end_date(),
                     "rows": enriched,
                     "row_count": len(enriched),
                     "supports_google": False,
@@ -721,6 +734,10 @@ class IMDbEnrichmentService:
                     "ttcode": external_ids.get("imdb_id") or "",
                     "total_seasons": details.get("number_of_seasons") or "",
                     "total_episodes": details.get("number_of_episodes") or "",
+                    "season_air_date": _parse_iso_date(details.get("first_air_date") or ""),
+                    "last_air_date": _parse_iso_date(
+                        (details.get("last_episode_to_air") or {}).get("air_date") or ""
+                    ),
                     "note": (
                         f"Matched via TMDB (\"{candidate_name}\")."
                         if score >= 60
@@ -1111,9 +1128,13 @@ class IMDbEnrichmentService:
         title = metacritic_row["Title Name"]
         normalized = normalize_title(title)
         candidates = self._series_candidates(connection, normalized)
+        season_start = _parse_iso_date(metacritic_row.get("Release Date", "")) or date.today()
+        end_disp = _display_date_or_blank(_season_end_date_for_row(metacritic_row, season_start))
 
         if not candidates:
-            return self._output_row(metacritic_row, "", "", "", "No exact normalized IMDb series match.")
+            return self._output_row(
+                metacritic_row, "", "", "", "No exact normalized IMDb series match.", end_date_display=end_disp
+            )
 
         chosen = self._best_series_candidate(candidates, metacritic_row)
         expected_type = "tvMiniSeries" if metacritic_row.get("Release Type") == "Limited Series" else "tvSeries"
@@ -1141,6 +1162,7 @@ class IMDbEnrichmentService:
             counts["season_count"] or "",
             counts["episode_count"] or "",
             " ".join(notes),
+            end_date_display=end_disp,
         )
 
     def _season_episode_row(
@@ -1382,10 +1404,12 @@ class IMDbEnrichmentService:
         total_seasons: str | int,
         total_episodes: str | int,
         note: str,
+        end_date_display: str = "",
     ) -> dict[str, str | int]:
         return {
             "Title Name": metacritic_row.get("Title Name", ""),
             "Release Date": metacritic_row.get("Release Date", ""),
+            "End Date": end_date_display,
             "Total Seasons": total_seasons,
             "Total Episodes": total_episodes,
             "ttcode": ttcode,
@@ -1515,6 +1539,23 @@ def _ensure_ttcode_column(columns: list[str], title_column: str) -> None:
         columns.append(TT_CODE_COLUMN)
         return
     columns.insert(insert_at, TT_CODE_COLUMN)
+
+
+def _imdb_columns_with_end_date() -> list[str]:
+    """Return the IMDb-Enriched columns with an ``End Date`` column added.
+
+    The section's column list drives the rendered table and CSV/Excel exports,
+    so the new column is inserted here (right after ``Release Date``) rather
+    than mutating the shared IMDB_COLUMNS constant.
+    """
+    columns = list(IMDB_COLUMNS)
+    if "End Date" in columns:
+        return columns
+    if "Release Date" in columns:
+        columns.insert(columns.index("Release Date") + 1, "End Date")
+    else:
+        columns.append("End Date")
+    return columns
 
 
 def _category_for_ttcode_lookup(
