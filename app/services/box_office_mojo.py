@@ -155,8 +155,9 @@ class BoxOfficeMojoService:
             "summary": (
                 f"Compared Box Office Mojo domestic movie releases from {start_date.isoformat()} "
                 f"through {end_date.isoformat()} against saved Box Office Mojo schedules from the last "
-                f"{history_lookback_days} days. This section shows only movies whose release date changed "
-                "between saved runs."
+                f"{history_lookback_days} days. This section shows movies whose release date changed "
+                "between saved runs, plus movies that previously appeared as Limited and are now "
+                "scheduled as Wide (Limited → Wide expansion) with the updated release date."
             ),
             "sections": [
                 {
@@ -676,7 +677,7 @@ def _release_date_change_rows_for_rows(
 ) -> list[dict[str, str]]:
     previous_by_key = _previous_release_dates_by_key(previous_snapshots)
     changes: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for current_row in current_rows:
         key = _release_identity(current_row)
         if not key:
@@ -684,21 +685,54 @@ def _release_date_change_rows_for_rows(
         new_date = _clean_text(str(current_row.get("Release Date", "") or ""))
         if not new_date:
             continue
-        previous_dates = previous_by_key.get(key, [])
-        old_date = next((item["release_date"] for item in previous_dates if item["release_date"] != new_date), "")
-        if not old_date:
+        # match by Box Office Mojo release id first; fall back to the title
+        # key so a Limited run and its later Wide expansion (which BOM may
+        # list under a different release id) still line up
+        previous_entries = previous_by_key.get(key) or previous_by_key.get(_title_key(current_row), [])
+        if not previous_entries:
             continue
+        new_scale = _clean_text(str(current_row.get("Scale", "") or ""))
+        date_entry = next((item for item in previous_entries if item["release_date"] != new_date), None)
+        old_date = date_entry["release_date"] if date_entry else ""
+
+        # Limited -> Wide expansion: the movie previously appeared as Limited
+        # and is now scheduled as Wide (with the updated release date)
+        limited_entry = None
+        if "wide" in new_scale.lower():
+            limited_entry = next(
+                (item for item in previous_entries
+                 if "limited" in str(item.get("scale", "")).lower()),
+                None,
+            )
+        if not old_date and not limited_entry:
+            continue
+        if limited_entry and limited_entry["release_date"] != new_date:
+            # prefer the Limited run's date as the "old" date for expansions
+            old_date = limited_entry["release_date"]
+        old_scale = str((limited_entry or date_entry or {}).get("scale", "") or "")
+
+        change_parts = []
+        if old_date and old_date != new_date:
+            change_parts.append("Date change")
+        if limited_entry:
+            change_parts.append("Limited → Wide expansion")
+        change_type = " + ".join(change_parts)
+
+        display_old_date = old_date or new_date
         title = _clean_text(str(current_row.get("Title Name", "") or ""))
-        change_key = (key, old_date, new_date)
+        change_key = (key, display_old_date, new_date, change_type)
         if change_key in seen:
             continue
         seen.add(change_key)
         changes.append(
             {
                 "Title Name": title,
-                "Old Release Date": old_date,
+                "Old Release Date": display_old_date,
                 "New Release Date": new_date,
-                "Release Date Change": _release_date_change_label(old_date, new_date),
+                "Release Date Change": _release_date_change_label(display_old_date, new_date),
+                "Old Scale": old_scale,
+                "New Scale": new_scale,
+                "Change Type": change_type,
             }
         )
     changes.sort(key=lambda item: (item["New Release Date"], item["Title Name"].lower()))
@@ -730,13 +764,17 @@ def _previous_release_dates_by_key(previous_snapshots: list[dict[str, Any]]) -> 
             release_date = _clean_text(str(row.get("Release Date", "") or ""))
             if not key or not release_date:
                 continue
-            previous_by_key.setdefault(key, []).append(
-                {
-                    "release_date": release_date,
-                    "run_id": run_id,
-                    "created_at": created_at,
-                }
-            )
+            entry = {
+                "release_date": release_date,
+                "scale": _clean_text(str(row.get("Scale", "") or "")),
+                "run_id": run_id,
+                "created_at": created_at,
+            }
+            # index under the release-id key AND the title key, so a Wide
+            # expansion listed under a new BOM release id still matches the
+            # earlier Limited run of the same movie
+            for index_key in {key, _title_key(row)} - {""}:
+                previous_by_key.setdefault(index_key, []).append(entry)
     return previous_by_key
 
 
@@ -762,6 +800,10 @@ def _release_identity(row: dict[str, Any]) -> str:
         path = urlsplit(source_url).path.rstrip("/").lower()
         if "/release/" in path:
             return path
+    return _title_key(row)
+
+
+def _title_key(row: dict[str, Any]) -> str:
     title = _clean_text(str(row.get("Title Name", "") or "")).lower()
     return re.sub(r"[^a-z0-9]+", " ", title).strip()
 
