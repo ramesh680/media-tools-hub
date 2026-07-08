@@ -157,6 +157,23 @@ TV_SEASON_EPISODE_COLUMNS = [
 ]
 
 
+YOUTUBE_RELEASE_COLUMNS = [
+    "Input Title",
+    "Input Type",
+    "Input Network / Distributor",
+    "Input Release Year",
+    "Confirmation",
+    "Confidence",
+    "Official Trailer Network",
+    "YouTube Channel",
+    "Channel ID",
+    "Video Title",
+    "YouTube Release Date",
+    "YouTube URL",
+    "Matched Keywords",
+    "Lookup Note",
+]
+
 TRACKER_TITLES = {
     "tv": "TV Premiere Calendar",
     "imdb": "IMDb-Enriched TV Series Snapshot",
@@ -169,6 +186,7 @@ TRACKER_TITLES = {
     "release_schedule_changes": "Release Schedule Changes",
     "imdb_verifier": "IMDb Bulk Verification",
     "billboard_artist_100": "Billboard Artist 100",
+    "youtube_release_verifier": "YouTube Release Verifier",
 }
 
 
