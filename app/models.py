@@ -74,6 +74,9 @@ BOX_OFFICE_RELEASE_DATE_CHANGE_COLUMNS = [
     "Old Release Date",
     "New Release Date",
     "Release Date Change",
+    "Old Scale",
+    "New Scale",
+    "Change Type",
 ]
 
 BOX_OFFICE_OPENING_COLUMNS = [
@@ -125,23 +128,6 @@ BILLBOARD_ARTIST_100_COLUMNS = [
     "Other Details",
 ]
 
-YOUTUBE_RELEASE_COLUMNS = [
-    "Input Title",
-    "Input Type",
-    "Input Network / Distributor",
-    "Input Release Year",
-    "Confirmation",
-    "Confidence",
-    "Official Trailer Network",
-    "YouTube Channel",
-    "Channel ID",
-    "Video Title",
-    "YouTube Release Date",
-    "YouTube URL",
-    "Matched Keywords",
-    "Lookup Note",
-]
-
 IMDB_COLUMNS = [
     "Title Name",
     "Release Date",
@@ -183,7 +169,6 @@ TRACKER_TITLES = {
     "release_schedule_changes": "Release Schedule Changes",
     "imdb_verifier": "IMDb Bulk Verification",
     "billboard_artist_100": "Billboard Artist 100",
-    "youtube_release_verifier": "YouTube Official Release Verification",
 }
 
 
