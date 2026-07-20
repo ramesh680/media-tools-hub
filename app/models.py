@@ -79,6 +79,18 @@ BOX_OFFICE_RELEASE_DATE_CHANGE_COLUMNS = [
     "Change Type",
 ]
 
+# Columns for the Release Schedule Changes tool, which reads Box Office Mojo's
+# dedicated "/calendar/changes/" page directly (Release, Distributor, Scale,
+# Old Date, New Date) plus the date the change was published on that page.
+BOX_OFFICE_SCHEDULE_CHANGE_COLUMNS = [
+    "Release",
+    "Distributor",
+    "Scale",
+    "Old Date",
+    "New Date",
+    "Change Posted",
+]
+
 BOX_OFFICE_OPENING_COLUMNS = [
     "Input Title",
     "Matched Title",
