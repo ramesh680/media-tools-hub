@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 from urllib.parse import quote, urljoin, urlsplit
 import json
@@ -14,12 +14,18 @@ from app.models import (
     BOX_OFFICE_OPENING_COLUMNS,
     BOX_OFFICE_RECENT_OPENING_COLUMNS,
     BOX_OFFICE_RELEASE_DATE_CHANGE_COLUMNS,
+    BOX_OFFICE_SCHEDULE_CHANGE_COLUMNS,
     utc_now_iso,
 )
 from app.services.http_client import HttpClient
 
 
 BOX_OFFICE_MOJO_CALENDAR_URL = "https://www.boxofficemojo.com/calendar/"
+BOX_OFFICE_MOJO_CHANGES_URL = "https://www.boxofficemojo.com/calendar/changes/"
+# Safety cap so a run never walks the entire 10k+ change archive; each page holds
+# ~30 changes and the page is sorted newest-first, so we stop as soon as a page's
+# oldest change predates the requested window.
+BOX_OFFICE_MOJO_CHANGES_MAX_PAGES = 12
 BOX_OFFICE_MOJO_TITLE_URL = "https://www.boxofficemojo.com/title/"
 BOX_OFFICE_MOJO_WEEKEND_BY_DATE_URL = "https://www.boxofficemojo.com/weekend/by-date/"
 IMDB_SUGGESTION_URL = "https://v2.sg.media-imdb.com/suggestion/{first}/{query}.json"
@@ -121,51 +127,91 @@ class BoxOfficeMojoService:
 
     def fetch_release_schedule_changes(
         self,
-        previous_snapshots: list[dict[str, Any]],
         today: date | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
-        history_lookback_days: int = 14,
+        lookback_days: int = 7,
         progress: ProgressCallback | None = None,
+        # Accepted for backward compatibility with older callers; no longer used
+        # now that changes come straight from Box Office Mojo's Changes page
+        # instead of being diffed against saved runs.
+        previous_snapshots: list[dict[str, Any]] | None = None,
+        history_lookback_days: int | None = None,
     ) -> dict[str, Any]:
+        """Read Box Office Mojo's dedicated domestic Release Schedule Changes page
+        and return every change published within the requested window.
+
+        Window resolution:
+          * both start and end given  -> use that exact range (by *published* date)
+          * only a start given        -> start .. today
+          * nothing given             -> the last ``lookback_days`` days (default 7)
+        """
         today = today or date.today()
-        start_date = start_date or today - timedelta(days=7)
-        end_date = end_date or today + timedelta(days=30)
-        if end_date < start_date:
+        if start_date and end_date:
+            window_start, window_end = start_date, end_date
+        elif start_date and not end_date:
+            window_start, window_end = start_date, today
+        else:
+            span = max(1, lookback_days)
+            window_start, window_end = today - timedelta(days=span - 1), today
+        if window_end < window_start:
             raise ValueError("End date must be the same as or later than the start date.")
 
-        calendar_url = urljoin(BOX_OFFICE_MOJO_CALENDAR_URL, f"{start_date.isoformat()}/")
         if progress:
-            progress(8, "Fetching Box Office Mojo schedule for release changes")
-        html = self.http_client.get_text(calendar_url)
-        if progress:
-            progress(45, "Parsing releases from last week through the next month")
-        current_rows = self.parse_calendar(html, start_date=start_date, end_date=end_date)
-        current_rows.sort(key=lambda item: (item["Release Date"], item["Title Name"].lower()))
-        if progress:
-            progress(85, "Comparing release dates with recent saved schedules")
-        change_rows = _release_date_change_rows_for_rows(current_rows, previous_snapshots)
+            progress(8, "Opening Box Office Mojo release schedule changes")
 
+        collected: list[dict[str, Any]] = []
+        page_url: str | None = BOX_OFFICE_MOJO_CHANGES_URL
+        pages = 0
+        while page_url and pages < BOX_OFFICE_MOJO_CHANGES_MAX_PAGES:
+            html = self.http_client.get_text(page_url)
+            page_rows, oldest_on_page, next_href = _parse_changes_page(html)
+            for row in page_rows:
+                posted = row["_posted"]
+                if window_start <= posted <= window_end:
+                    collected.append(row)
+            pages += 1
+            if progress:
+                progress(
+                    min(85, 20 + pages * 12),
+                    f"Reading changes (page {pages}, {len(collected)} in window so far)",
+                )
+            # The page is newest-first: once its oldest change predates the window
+            # start, nothing further back can be in range.
+            if oldest_on_page is not None and oldest_on_page < window_start:
+                break
+            page_url = urljoin(BOX_OFFICE_MOJO_CHANGES_URL, next_href) if next_href else None
+
+        collected.sort(key=lambda item: (item["_posted"], item["Release"].lower()), reverse=True)
+        change_rows = [
+            {key: value for key, value in row.items() if key != "_posted"}
+            for row in collected
+        ]
+
+        if progress:
+            progress(92, "Formatting results")
+
+        change_count = len(change_rows)
         return {
             "tracker_type": "release_schedule_changes",
             "title": "Release Schedule Changes",
             "created_at": utc_now_iso(),
-            "source_url": calendar_url,
-            "boxoffice_schedule_rows": current_rows,
+            "source_url": BOX_OFFICE_MOJO_CHANGES_URL,
             "summary": (
-                f"Compared Box Office Mojo domestic movie releases from {start_date.isoformat()} "
-                f"through {end_date.isoformat()} against saved Box Office Mojo schedules from the last "
-                f"{history_lookback_days} days. This section shows movies whose release date changed "
-                "between saved runs, plus movies that previously appeared as Limited and are now "
-                "scheduled as Wide (Limited → Wide expansion) with the updated release date."
+                f"Domestic release schedule changes published on Box Office Mojo between "
+                f"{window_start.isoformat()} and {window_end.isoformat()} "
+                f"({change_count} change{'' if change_count == 1 else 's'}). "
+                "Each row is taken directly from Box Office Mojo's Schedule Changes page and shows the "
+                "release, its distributor, scale, the old and new release dates, and the date the change "
+                "was posted. \"New\" in the Old Date column marks a title newly added to the schedule."
             ),
             "sections": [
                 {
                     "key": "release_schedule_changes",
                     "title": "Release Schedule Changes",
-                    "columns": BOX_OFFICE_RELEASE_DATE_CHANGE_COLUMNS[:],
+                    "columns": BOX_OFFICE_SCHEDULE_CHANGE_COLUMNS[:],
                     "rows": change_rows,
-                    "row_count": len(change_rows),
+                    "row_count": change_count,
                     "supports_google": True,
                 }
             ],
@@ -662,6 +708,118 @@ def _try_parse_release_date(value: str) -> date | None:
 
 def _append_detail(existing: str, addition: str) -> str:
     return "; ".join(part for part in [existing, addition] if part)
+
+
+_CHANGE_DATE_FORMATS = ("%b %d, %Y", "%B %d, %Y")  # "Aug 21, 2026" and "July 14, 2026"
+
+
+def _change_cell_text(cell: Any) -> str:
+    return " ".join(cell.get_text(" ", strip=True).split())
+
+
+def _parse_change_date(text: str) -> date | None:
+    text = (text or "").strip()
+    if not text:
+        return None
+    for fmt in _CHANGE_DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _select_changes_table(soup: BeautifulSoup):
+    """Pick the table that carries the Old Date / New Date change columns."""
+    for table in soup.find_all("table"):
+        header_text = table.get_text(" ", strip=True).lower()
+        if "old date" in header_text and "new date" in header_text:
+            return table
+    return (
+        soup.select_one("table.mojo-table-annotated")
+        or soup.select_one("table.mojo-body-table")
+        or soup.find("table")
+    )
+
+
+def _find_next_changes_href(soup: BeautifulSoup) -> str | None:
+    """Return the href of the 'Next page' control, if one is present and active."""
+    for anchor in soup.find_all("a"):
+        label = anchor.get_text(" ", strip=True).lower()
+        if label.startswith("next"):
+            href = anchor.get("href")
+            if href:
+                return href
+    return None
+
+
+def _parse_changes_page(html: str) -> tuple[list[dict[str, Any]], date | None, str | None]:
+    """Parse one Box Office Mojo Changes page.
+
+    Returns (rows, oldest_posted_date_on_page, next_page_href). Each row carries a
+    ``_posted`` ``date`` (the change's published date, taken from the section
+    header it sits under) plus the display columns.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    table = _select_changes_table(soup)
+    if table is None:
+        return [], None, None
+
+    rows: list[dict[str, Any]] = []
+    posted_dates: list[date] = []
+    current_posted: date | None = None
+
+    for table_row in table.find_all("tr"):
+        cells = table_row.find_all(["td", "th"])
+        if not cells:
+            continue
+        texts = [_change_cell_text(cell) for cell in cells]
+        joined = " ".join(texts).lower()
+
+        # Column-header row -> skip.
+        if "old date" in joined and "new date" in joined and "release" in joined:
+            continue
+
+        nonempty = [text for text in texts if text]
+        has_colspan = any(int(cell.get("colspan", 1) or 1) > 1 for cell in cells)
+        is_group_header = (
+            has_colspan
+            or len(nonempty) == 1
+            or "mojo-annotation-row" in (table_row.get("class") or [])
+        )
+        if is_group_header:
+            parsed = _parse_change_date(nonempty[0]) if nonempty else None
+            if parsed:
+                current_posted = parsed
+            continue
+
+        data_cells = table_row.find_all("td")
+        if len(data_cells) < 5 or current_posted is None:
+            continue
+
+        release = _change_cell_text(data_cells[0])
+        if not release:
+            continue
+        distributor = _change_cell_text(data_cells[1])
+        scale = _change_cell_text(data_cells[2])
+        old_date = _change_cell_text(data_cells[3])  # may literally be "New"
+        new_date = _change_cell_text(data_cells[4])
+
+        posted_dates.append(current_posted)
+        rows.append(
+            {
+                "_posted": current_posted,
+                "Release": release,
+                "Distributor": distributor,
+                "Scale": scale,
+                "Old Date": old_date,
+                "New Date": new_date,
+                "Change Posted": current_posted.isoformat(),
+            }
+        )
+
+    oldest = min(posted_dates) if posted_dates else None
+    return rows, oldest, _find_next_changes_href(soup)
 
 
 def _release_date_change_rows(
