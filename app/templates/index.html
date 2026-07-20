@@ -175,9 +175,9 @@
     <article class="action-card">
       <p class="eyebrow">Box Office</p>
       <h3>Release Schedule Changes</h3>
-      <p>Compares recent Box Office Mojo schedules to surface movies whose release dates have shifted. Pick a custom date range to override the default window (last 7 days through the next 30 days).</p>
+      <p>Reads Box Office Mojo's domestic Release Schedule Changes page directly and lists every change published in the last 7 days — release, distributor, scale, old date and new date. Pick a custom date range to widen or shift the window (filtered by the date each change was posted).</p>
       <form class="tracker-form" hx-post="/release-schedule-changes/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_range_controls("Date range (optional)", "Leave blank for last 7 days through next 30 days.") }}
+        {{ date_range_controls("Date range (optional)", "Leave blank for changes published in the last 7 days.") }}
         <button class="primary-button" type="submit">Fetch Release Schedule Changes</button>
       </form>
     </article>
