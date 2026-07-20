@@ -68,6 +68,9 @@ from app.billboard_new_entries import router as billboard_new_entries_router  # 
 app.include_router(billboard_new_entries_router)
 
 RELEASE_SCHEDULE_CHANGE_HISTORY_LOOKBACK_DAYS = 14
+# Default window for the Release Schedule Changes tool: how many days back of
+# published Box Office Mojo changes to show when no custom date range is picked.
+RELEASE_SCHEDULE_CHANGE_LOOKBACK_DAYS = 7
 
 
 @app.on_event("startup")
@@ -472,18 +475,18 @@ async def start_release_schedule_changes(request: Request) -> HTMLResponse:
     if isinstance(date_range, HTMLResponse):
         return date_range
     today = date.today()
-    # Case 1 (single day / nothing picked): from the start day forward 12 months.
-    # Case 2 (explicit range): honour the exact start and end that were entered.
-    start_date = date_range[0] or today
-    end_date = date_range[1] or _add_one_year(start_date)
+    # No range picked -> last 7 days of published changes. A range narrows the
+    # window by the change's *published* date.
+    start_date = date_range[0]
+    end_date = date_range[1]
     job = job_manager.start(
         "release_schedule_changes",
         lambda progress: _with_imdb_ttcodes(
             box_office_service.fetch_release_schedule_changes(
-                previous_snapshots=_recent_box_office_schedule_snapshots(),
+                today=today,
                 start_date=start_date,
                 end_date=end_date,
-                history_lookback_days=RELEASE_SCHEDULE_CHANGE_HISTORY_LOOKBACK_DAYS,
+                lookback_days=RELEASE_SCHEDULE_CHANGE_LOOKBACK_DAYS,
                 progress=progress,
             ),
             progress,
