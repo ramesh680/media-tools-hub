@@ -793,7 +793,17 @@ def _parse_changes_page(html: str) -> tuple[list[dict[str, Any]], date | None, s
                 current_posted = parsed
             continue
 
-        data_cells = table_row.find_all("td")
+        # Box Office Mojo renders each change as  old-date | arrow | new-date, and
+        # that middle "->" lives in its own decorative cell (class
+        # "mojo-field-type-shim"). Counting it as a real column shifts every field
+        # one to the left, so New Date ends up capturing the arrow. Drop the shim
+        # cell(s) first so the remaining cells line up as
+        # [Release, Distributor, Scale, Old Date, New Date].
+        data_cells = [
+            cell
+            for cell in table_row.find_all("td")
+            if "mojo-field-type-shim" not in (cell.get("class") or [])
+        ]
         if len(data_cells) < 5 or current_posted is None:
             continue
 
