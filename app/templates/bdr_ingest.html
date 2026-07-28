@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero-grid validator-hero-grid">
+  <article class="hero-card validator-hero-card">
+    <p class="eyebrow">Daily Asana</p>
+    <h1>BDR Ingest Report</h1>
+    <p>Turn a list of titles into an ingest-ready BDR report using the same ingest
+       templates as the Title Automation tool — matched to each title's category.</p>
+  </article>
+
+  <aside class="tracking-card validator-supported-card" aria-label="Categories">
+    <p class="eyebrow">Categories</p>
+    <ul class="supported-list">
+      <li>Movies</li>
+      <li>TV Shows</li>
+      <li>Talent</li>
+      <li>Video Games</li>
+      <li>Beauty / Beverages</li>
+      <li>Sports / Publishers</li>
+    </ul>
+  </aside>
+</section>
+
+<section class="validator-project-panel">
+  <p class="eyebrow">Ingest-template generation</p>
+  <h2>Generate BDR Report</h2>
+
+  <p class="validator-guide">Reuses <a href="{{ upstream }}" target="_blank" rel="noopener">the Title Automation service</a>,
+  so ingest templates stay in one place.</p>
+
+  <form
+    class="validator-workbook-form"
+    hx-post="/bdr-ingest/start"
+    hx-encoding="multipart/form-data"
+    hx-target="#bdr-workspace"
+    hx-swap="outerHTML"
+    method="post"
+    enctype="multipart/form-data"
+  >
+    <div class="validator-source-grid">
+      <label class="field-control">
+        <span>Paste titles (one per line)</span>
+        <textarea name="bulk_text" rows="6"
+                  placeholder="Dune 3&#10;The Bear [tv]&#10;LeBron James [talent] {basketball}&#10;Fortnite [game]"></textarea>
+      </label>
+
+      <label class="file-picker">
+        <span>…or upload a CSV / Excel file</span>
+        <input type="file" name="bulk_file" accept=".csv,.xlsx,.xls">
+      </label>
+    </div>
+
+    <p class="validator-form-note">In Mixed mode, tag each line with its category —
+    <b>[movie]</b>, <b>[tv]</b>, <b>[talent]</b>, <b>[game]</b>, <b>[publisher]</b>, etc.
+    For talent, add a profession hint in braces, e.g. <b>Michael Jordan [talent] {basketball}</b>,
+    to fetch the right social accounts.</p>
+
+    <div class="validator-lower-grid">
+      <label class="field-control">
+        <span>Title type (applies to untagged rows)</span>
+        <select name="title_type">
+          <option value="mixed" selected>Mixed (tag each line / use type column)</option>
+          <option value="movie">Movies</option>
+          <option value="tvshow">TV Shows</option>
+          <option value="talent">Talent</option>
+          <option value="game">Video Games</option>
+          <option value="beauty">Beauty (Health &amp; Beauty)</option>
+          <option value="beverages">Beverages</option>
+          <option value="sports">Sports Franchise</option>
+          <option value="general">General</option>
+          <option value="publisher">Publishers</option>
+        </select>
+      </label>
+
+      <label class="field-control">
+        <span>Talent professional details (optional)</span>
+        <input type="text" name="talent_profession" placeholder="e.g. Actor, NBA player, Musician">
+      </label>
+    </div>
+
+    <div class="validator-lower-grid">
+      <label class="field-control">
+        <span>Create both regular &amp; DAR versions</span>
+        <select name="include_dar">
+          <option value="true" selected>Yes</option>
+          <option value="false">No</option>
+        </select>
+      </label>
+
+      <label class="field-control">
+        <span>Auto-discover handles &amp; IDs</span>
+        <select name="auto_fetch">
+          <option value="true" selected>Yes (IMDb, Metacritic, Wikipedia, socials)</option>
+          <option value="false">No (faster, format only)</option>
+        </select>
+      </label>
+    </div>
+
+    <button class="primary-button" type="submit">Generate BDR Report</button>
+  </form>
+</section>
+
+<section id="bdr-workspace" class="workspace">
+  <div class="empty-state">Paste titles or upload a file, then generate the report.</div>
+</section>
+{% endblock %}
