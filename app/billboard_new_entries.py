@@ -23,9 +23,11 @@ from fastapi.templating import Jinja2Templates
 from openpyxl import Workbook
 
 from app.config import get_settings
+from app.services.bdr_ingest import BdrIngestError
 from app.services.billboard import BillboardArtist100Service, BILLBOARD_ARTIST_100_URL
 from app.services.http_client import HttpClient
 from app.services.imdb import IMDbEnrichmentService
+from app.services.ingest_export import convert_rows_to_ingest
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -167,6 +169,7 @@ def billboard_new_entries_run(
     chart_date: str = Form(""),
     start_date: str = Form(""),
     end_date: str = Form(""),
+    output: str = Form("report"),
 ):
     chart_date = (chart_date or "").strip()
     start_date = (start_date or "").strip()
@@ -260,6 +263,21 @@ def billboard_new_entries_run(
     # Enrich each artist with their IMDb nmcode + URL (name.basics dataset, with a
     # Wikidata fallback) and Wikipedia URL.
     _enrich_imdb_and_wikipedia(new_entries)
+
+    # Ingest Template output: convert these artists into a Talent ingest report
+    # using the same ingest templates as the Title Automation tool. The IMDb /
+    # Wikipedia / occupation data found above is passed through as authoritative;
+    # the generator fills the remaining fields.
+    if (output or "").strip().lower() == "ingest":
+        try:
+            result = convert_rows_to_ingest(new_entries, "billboard-artist-100")
+        except BdrIngestError as exc:
+            return _render_form(request, error_message=str(exc), status_code=502)
+        return StreamingResponse(
+            io.BytesIO(result["content"]),
+            media_type=result["media_type"],
+            headers={"Content-Disposition": f'attachment; filename="{result["filename"]}"'},
+        )
 
     # Build the Excel workbook.
     workbook = Workbook()
