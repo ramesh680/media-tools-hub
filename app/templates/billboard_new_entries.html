@@ -59,7 +59,21 @@
             <input type="date" name="chart_date" value="">
           </label>
         </fieldset>
-        <button class="primary-button" type="submit">Download Excel (LW = "-")</button>
+        <fieldset class="date-controls">
+          <legend>Output</legend>
+          <label>
+            <span>File to download</span>
+            <select name="output">
+              <option value="report" selected>Report (Excel) - the chart data</option>
+              <option value="ingest">Ingest Template (Excel) - Talent ingest rows</option>
+            </select>
+          </label>
+          <p class="date-range-hint">The ingest option converts these artists into a
+          <strong>Talent</strong> ingest report using the same ingest templates as the
+          Title Automation tool (DAR rows, brand sets, sub-category, search terms),
+          keeping the IMDb / Wikipedia data found here and filling the gaps.</p>
+        </fieldset>
+        <button class="primary-button" type="submit">Download (LW = "-")</button>
       </form>
     </article>
   </section>

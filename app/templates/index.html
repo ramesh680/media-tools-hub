@@ -62,8 +62,10 @@
   <aside class="tracking-card" aria-label="Available tools">
     <p class="eyebrow">What's here</p>
     <ul>
+      {% if false %}{# Hidden 2026-07-10: change false to true to re-enable Excel Validator & YouTube Release Verifier #}
       <li><strong>Excel Validator:</strong> upload a workbook and check it against your rules</li>
       <li><strong>YouTube Release Verifier:</strong> verify titles against official YouTube channels</li>
+      {% endif %}
       <li><strong>Upcoming Release Movies:</strong> live upcoming theatrical release list</li>
       <li><strong>Exports:</strong> CSV and Excel downloads</li>
     </ul>
@@ -95,13 +97,6 @@
       <a class="primary-button" href="/youtube-release-verifier">Open YouTube Release Verifier</a>
     </article>
     {% endif %}
-
-    <article class="action-card">
-      <p class="eyebrow">Daily Asana</p>
-      <h3>BDR Ingest Report</h3>
-      <p>Turn a list of titles into an ingest-ready BDR report using the same ingest templates as the Title Automation tool, matched to each title's category. Paste titles or upload a file.</p>
-      <a class="primary-button" href="/bdr-ingest">Open BDR Ingest Report</a>
-    </article>
 
     <article class="action-card">
       <p class="eyebrow">Billboard</p>
@@ -184,9 +179,9 @@
     <article class="action-card">
       <p class="eyebrow">Box Office</p>
       <h3>Release Schedule Changes</h3>
-      <p>Reads Box Office Mojo's domestic Release Schedule Changes page directly and lists every change published in the last 7 days — release, distributor, scale, old date and new date. Pick a custom date range to widen or shift the window (filtered by the date each change was posted).</p>
+      <p>Compares recent Box Office Mojo schedules to surface movies whose release dates have shifted. Pick a custom date range to override the default window (last 7 days through the next 30 days).</p>
       <form class="tracker-form" hx-post="/release-schedule-changes/start" hx-target="#workspace" hx-swap="outerHTML">
-        {{ date_range_controls("Date range (optional)", "Leave blank for changes published in the last 7 days.") }}
+        {{ date_range_controls("Date range (optional)", "Leave blank for last 7 days through next 30 days.") }}
         <button class="primary-button" type="submit">Fetch Release Schedule Changes</button>
       </form>
     </article>
@@ -199,6 +194,6 @@
 
 <section id="workspace" class="workspace workspace-empty">
   <h2>Pick a tool above</h2>
-  <p>Select Excel Validator or YouTube Release Verifier to begin.</p>
+  <p>Select a tool above to begin.</p>
 </section>
 {% endblock %}
