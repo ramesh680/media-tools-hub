@@ -98,6 +98,18 @@ def _date(v: Any) -> str:
     return m.group(0) if m else ""
 
 
+def _distributor(v: Any) -> str:
+    """Distributor/network, with the scraper's placeholders treated as blank."""
+    s = _s(v)
+    return "" if s.lower() in {"n/a", "na", "unknown", "-", "tbd"} else s
+
+
+def _scale(v: Any) -> str:
+    """Wide / Limited release scale (feeds the Movies sub-category)."""
+    s = _s(v).title()
+    return s if s in {"Wide", "Limited"} else ""
+
+
 def _first_of(v: Any) -> str:
     """First entry of a delimited list (e.g. 'singer, songwriter' -> 'singer')."""
     s = _s(v)
@@ -240,6 +252,23 @@ PROFILES: dict[str, IngestProfile] = {
             "imdb_id": (["IMDb ttcode", "IMDb URL"], _imdb),
         },
         label="Box Office",
+    ),
+    # Standalone upcoming-release-movies app (Box Office Mojo calendar).
+    # NOTE: its metacritic_url is an UNVERIFIED slug guess, so it is deliberately
+    # NOT passed through -- uploaded values are treated as authoritative and would
+    # skip verification. Discovery resolves a verified Metacritic URL instead.
+    "upcoming-release-movies": IngestProfile(
+        "Movies",
+        ["title", "Title", "Title Name"],
+        {
+            "imdb_id": (["imdb_url", "tt_code", "IMDb URL"], _imdb),
+            "released_on": (["release_date", "Release Date"], _date),
+            "network": (["distributor_network", "Distributor"], _distributor),
+            "genre": (["genre", "Genre"], _s),
+            # Wide/Limited drives 'Release - Wide|Limited' in title_sub_category
+            "release_scale": (["release_scale", "Scale"], _scale),
+        },
+        label="Upcoming Release Movies",
     ),
     "game-release-calendar": IngestProfile(
         "Video Game",
