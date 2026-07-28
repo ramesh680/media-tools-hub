@@ -17,6 +17,7 @@ const els = {
   distributorFilter: document.getElementById("distributorFilter"),
   resetFilters: document.getElementById("resetFilters"),
   exportCsv: document.getElementById("exportCsv"),
+  exportIngest: document.getElementById("exportIngest"),
   moviesBody: document.getElementById("moviesBody"),
   emptyState: document.getElementById("emptyState"),
   statusText: document.getElementById("statusText"),
@@ -247,6 +248,55 @@ function csvCell(value) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
+// Second download option: the same (filtered) rows as a Movies ingest template.
+// The server calls the Title Automation ingest logic, so this can take a few
+// seconds per title when it fills in missing IMDb / Metacritic / socials.
+async function exportIngestTemplate() {
+  const movies = state.filteredMovies;
+  if (!movies.length) {
+    setStatus("Nothing to convert - fetch releases first.", "");
+    return;
+  }
+  const button = els.exportIngest;
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Building ingest template...";
+  setStatus(`Building a Movies ingest template for ${movies.length} titles...`, "");
+  try {
+    const response = await fetch("/api/ingest-template", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ movies }),
+    });
+    if (!response.ok) {
+      let message = `Request failed (${response.status})`;
+      try {
+        const data = await response.json();
+        if (data && data.error) message = data.error;
+      } catch (err) { /* non-JSON error body */ }
+      setStatus("Ingest template failed", message);
+      return;
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = match ? match[1] : "upcoming_release_movies_movies_ingest.xlsx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatus(`Ingest template downloaded for ${movies.length} titles`, "");
+  } catch (err) {
+    setStatus("Ingest template failed", String(err));
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 document.querySelectorAll(".preset-button").forEach((button) => {
   button.addEventListener("click", () => {
     setPreset(Number(button.dataset.months));
@@ -278,6 +328,7 @@ els.resetFilters.addEventListener("click", () => {
 });
 
 els.exportCsv.addEventListener("click", exportCsv);
+els.exportIngest.addEventListener("click", exportIngestTemplate);
 
 setPreset(18);
 loadMovies().catch((error) => setStatus(error.message));
