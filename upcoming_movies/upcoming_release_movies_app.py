@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -26,6 +27,33 @@ DEFAULT_RANGE_MONTHS = 18
 CACHE_TTL_SECONDS = 15 * 60
 ROOT_DIR = Path(__file__).resolve().parent
 STATIC_DIR = ROOT_DIR / "static"
+REPO_ROOT = ROOT_DIR.parent
+
+# Second download option: turn this tool's own rows into a Movies ingest
+# template, using the same ingest-template logic as the Title Automation tool.
+# The shared modules live in the repo's app/services package (both Render
+# services run from the repo root); importing fails soft so the core tool keeps
+# working even if they are absent.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+try:
+    from app.services.bdr_ingest import BdrIngestError
+    from app.services.ingest_export import convert_rows_to_ingest
+
+    INGEST_OK = True
+except Exception as _ingest_exc:  # pragma: no cover - optional dependency
+    INGEST_OK = False
+
+    class BdrIngestError(RuntimeError):
+        pass
+
+    def convert_rows_to_ingest(*_a: Any, **_k: Any) -> dict:
+        raise BdrIngestError(
+            "Ingest template generation is unavailable in this deployment "
+            f"({_ingest_exc})."
+        )
+
+INGEST_SLUG = "upcoming-release-movies"
 
 _PAGE_CACHE: dict[str, tuple[float, str]] = {}
 
@@ -439,6 +467,44 @@ class UpcomingReleaseMoviesHandler(BaseHTTPRequestHandler):
             self.handle_api(parsed.query)
             return
         self.handle_static(parsed.path)
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler naming
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/ingest-template":
+            self.handle_ingest_template()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
+    def handle_ingest_template(self) -> None:
+        """Second download option: the SAME rows the user is looking at, turned
+        into a Movies ingest template via the Title Automation ingest logic.
+        The rows are posted from the page so the user's filters are respected."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length) if length else b"{}"
+            payload = json.loads(body.decode("utf-8") or "{}")
+            movies = payload.get("movies") or []
+            if not isinstance(movies, list) or not movies:
+                self.send_json(HTTPStatus.BAD_REQUEST,
+                               {"error": "No movies were sent to convert."})
+                return
+            result = convert_rows_to_ingest(movies, INGEST_SLUG)
+        except BdrIngestError as exc:
+            self.send_json(HTTPStatus.BAD_GATEWAY, {"error": str(exc)})
+            return
+        except Exception as exc:  # pragma: no cover - defensive API boundary
+            self.send_json(HTTPStatus.BAD_GATEWAY,
+                           {"error": f"Could not build the ingest template: {exc}"})
+            return
+
+        content = result["content"]
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", result["media_type"])
+        self.send_header("Content-Disposition",
+                         f'attachment; filename="{result["filename"]}"')
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
 
     def handle_api(self, query_string: str) -> None:
         query = urllib.parse.parse_qs(query_string)
