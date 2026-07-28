@@ -24,6 +24,12 @@
           {% if section.supports_google %}
             <a class="secondary-button" href="/export/{{ section.export_id }}/google">Google Sheets</a>
           {% endif %}
+          {% if snapshot.ingest_category %}
+            <a class="primary-button" href="/export/{{ section.export_id }}/ingest"
+               title="Turn this same data into a {{ snapshot.ingest_category }} ingest template (Title Automation ingest logic)">
+              Ingest Template ({{ snapshot.ingest_category }})
+            </a>
+          {% endif %}
         </div>
       </div>
 
