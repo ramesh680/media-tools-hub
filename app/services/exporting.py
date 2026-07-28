@@ -28,6 +28,15 @@ class ExportService:
         return export_id
 
     def register_snapshot_exports(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        # Tag the run with its ingest title category (blank when the tool's rows
+        # don't map to one), so the result panel can offer the second download
+        # option: the same data as an ingest template.
+        try:
+            from app.services.ingest_export import ingest_category_for_tracker
+            snapshot["ingest_category"] = ingest_category_for_tracker(
+                snapshot.get("tracker_type", ""))
+        except Exception:  # never let this break an export
+            snapshot["ingest_category"] = ""
         for section in snapshot.get("sections", []):
             payload = ExportPayload(
                 title=section["title"],
@@ -55,10 +64,44 @@ class ExportService:
             return self._xlsx_response(payload)
         if fmt in {"google", "sheets", "gsheets"}:
             return self._google_sheets_response(payload)
+        if fmt == "ingest":
+            return self._ingest_response(payload)
         return HTMLResponse(
             "<main class='export-error'><h1>Unsupported export format.</h1>"
-            "<p>Use CSV, Excel, or Google Sheets.</p></main>",
+            "<p>Use CSV, Excel, Google Sheets, or Ingest Template.</p></main>",
             status_code=404,
+        )
+
+    def _ingest_response(self, payload: ExportPayload) -> Response:
+        """Second download option: the SAME run's data turned into the ingest
+        template for that tool's title category (TV Shows / Movies / Talent /
+        Video Game), using the Title Automation ingest-template logic."""
+        from app.services.bdr_ingest import BdrIngestError
+        from app.services.ingest_export import (convert_rows_to_ingest,
+                                                ingest_slug_for_tracker)
+
+        slug = ingest_slug_for_tracker(payload.tracker_type)
+        if not slug:
+            return HTMLResponse(
+                "<main class='export-error'><h1>No ingest template for this tool.</h1>"
+                "<p>This report's rows do not map to a single title category, so an "
+                "ingest template cannot be generated from it.</p></main>",
+                status_code=404,
+            )
+        rows = [dict(zip(payload.columns, r)) if isinstance(r, (list, tuple)) else dict(r)
+                for r in payload.rows]
+        try:
+            result = convert_rows_to_ingest(rows, slug)
+        except BdrIngestError as exc:
+            return HTMLResponse(
+                "<main class='export-error'><h1>Could not build the ingest template.</h1>"
+                f"<p>{exc}</p></main>",
+                status_code=502,
+            )
+        return StreamingResponse(
+            BytesIO(result["content"]),
+            media_type=result["media_type"],
+            headers={"Content-Disposition": f'attachment; filename="{result["filename"]}"'},
         )
 
     def _csv_response(self, payload: ExportPayload) -> StreamingResponse:
