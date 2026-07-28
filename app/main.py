@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import get_settings
 from app.services.cache import TTLCache
+from app.services.bdr_ingest import BdrIngestError, BdrIngestService
 from app.services.billboard import BillboardArtist100Service
 from app.services.box_office_mojo import BoxOfficeMojoService
 from app.services.exporting import ExportService
@@ -57,6 +58,12 @@ export_service = ExportService(settings.export_ttl_seconds, settings.google_serv
 job_manager = JobManager(settings.job_ttl_seconds, history_repository)
 validator_job_manager = ValidatorJobManager(settings.job_ttl_seconds)
 validator_artifacts = TTLCache(settings.export_ttl_seconds)
+# BDR ingest report generation (reuses the Title Automation service; see
+# app/services/bdr_ingest.py). Its own generic job manager + artifact cache,
+# mirroring the excel-validator wiring so it stays decoupled from the calendars.
+bdr_ingest_service = BdrIngestService()
+bdr_job_manager = ValidatorJobManager(settings.job_ttl_seconds)
+bdr_artifacts = TTLCache(settings.export_ttl_seconds)
 
 app = FastAPI(title=settings.app_name)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -253,6 +260,109 @@ def download_validated_workbook(artifact_id: str) -> Response:
         content=artifact.get("content", b""),
         media_type=artifact.get("media_type") or "application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ========================= BDR Ingest Report =============================
+# Generate an ingest-ready BDR report from a title list, reusing the Title
+# Automation tool's ingest-template logic via its API (bdr_ingest.py).
+
+@app.get("/bdr-ingest", response_class=HTMLResponse)
+def bdr_ingest(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "bdr_ingest.html",
+        {"upstream": bdr_ingest_service.base_url},
+    )
+
+
+@app.post("/bdr-ingest/start", response_class=HTMLResponse)
+async def start_bdr_ingest(
+    request: Request,
+    bulk_text: str = Form(""),
+    title_type: str = Form("mixed"),
+    include_dar: str = Form("true"),
+    auto_fetch: str = Form("true"),
+    talent_profession: str = Form(""),
+    bulk_file: UploadFile | None = File(None),
+) -> HTMLResponse:
+    filename = bulk_file.filename if bulk_file and bulk_file.filename else ""
+    file_content = await bulk_file.read() if bulk_file and bulk_file.filename else None
+    if not file_content and not bulk_text.strip():
+        return _bdr_error_response(
+            request, "Paste at least one title or upload a CSV/Excel file."
+        )
+    include_dar_b = include_dar.strip().lower() not in {"0", "false", "no", "off"}
+    auto_fetch_b = auto_fetch.strip().lower() not in {"0", "false", "no", "off"}
+
+    def _job(progress):
+        result = bdr_ingest_service.generate(
+            bulk_text=bulk_text,
+            file_content=file_content,
+            filename=filename,
+            title_type=title_type,
+            include_dar=include_dar_b,
+            auto_fetch=auto_fetch_b,
+            talent_profession=talent_profession,
+            progress=progress,
+        )
+        artifact_id = uuid.uuid4().hex
+        bdr_artifacts.set(
+            artifact_id,
+            {
+                "filename": result["filename"],
+                "content": result["content"],
+                "media_type": result["media_type"],
+            },
+        )
+        result["artifact_id"] = artifact_id
+        return result
+
+    job = bdr_job_manager.start(_job)
+    return _bdr_progress_response(request, job.to_dict())
+
+
+@app.get("/bdr-ingest/progress/{job_id}", response_class=HTMLResponse)
+def bdr_ingest_progress(request: Request, job_id: str) -> HTMLResponse:
+    job = bdr_job_manager.get(job_id)
+    if job is None:
+        return _bdr_error_response(
+            request, "This generation job expired. Start a new run from the form above."
+        )
+    if job.status == "completed" and job.result:
+        return templates.TemplateResponse(
+            request, "partials/bdr_result.html", {"result": job.result}
+        )
+    if job.status == "failed":
+        return _bdr_error_response(
+            request, job.error_message or "The BDR report could not be generated."
+        )
+    return _bdr_progress_response(request, job.to_dict())
+
+
+@app.get("/bdr-ingest/download/{artifact_id}")
+def download_bdr_report(artifact_id: str) -> Response:
+    artifact = bdr_artifacts.get(artifact_id)
+    if not artifact:
+        return HTMLResponse(
+            "Generated report expired. Please generate the BDR report again.",
+            status_code=404,
+        )
+    filename = artifact.get("filename") or "BDR_Ingest.xlsx"
+    return Response(
+        content=artifact.get("content", b""),
+        media_type=artifact.get("media_type") or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _bdr_progress_response(request: Request, job: dict) -> HTMLResponse:
+    return templates.TemplateResponse(request, "partials/bdr_progress.html", {"job": job})
+
+
+def _bdr_error_response(request: Request, message: str) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request, "partials/bdr_error.html", {"error_message": message}
     )
 
 
