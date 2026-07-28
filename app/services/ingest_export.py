@@ -110,6 +110,14 @@ def _scale(v: Any) -> str:
     return s if s in {"Wide", "Limited"} else ""
 
 
+def _lang(v: Any) -> str:
+    """'English' -> 'en' so the TV sub-category picks Language Type - English."""
+    t = _s(v).lower()
+    if not t:
+        return ""
+    return "en" if "english" in t else "xx"
+
+
 def _first_of(v: Any) -> str:
     """First entry of a delimited list (e.g. 'singer, songwriter' -> 'singer')."""
     s = _s(v)
@@ -128,11 +136,18 @@ class IngestProfile:
     category  : the ingest title category ('Talent', 'Movies', 'TV Shows', ...)
     title_from: source column(s) holding the title/name -- first non-blank wins
     columns   : {ingest_column: source_column | (source_column, normalizer)}
+    dar_mode  : 'both' -> emit the owned (non-DAR) row AND its ' - DAR' twin
+                'dar'  -> emit the ' - DAR' row only
+                Ops rule: Movies and TV Shows get both versions; every other
+                category is DAR-only.
     """
 
     def __init__(self, category: str, title_from, columns: Optional[dict] = None,
-                 label: str = "") -> None:
+                 label: str = "", dar_mode: str = "") -> None:
         self.category = category
+        # default from the category, so new profiles follow the Ops rule
+        self.dar_mode = dar_mode or (
+            "both" if str(category).strip().lower() in {"movies", "tv shows"} else "dar")
         self.title_from = [title_from] if isinstance(title_from, str) else list(title_from)
         self.columns = columns or {}
         self.label = label or category
@@ -220,15 +235,23 @@ PROFILES: dict[str, IngestProfile] = {
         },
         label="TV Premiere Calendar",
     ),
+    # The TV Season/Episode review snapshot uses snake_case column keys
+    # (title, release_date, network_distributor, imdb_id, program_type, ...),
+    # unlike the display-label calendars -- both spellings are listed so the
+    # profile works either way. Its metacritic_url is a slug GUESS, so it is
+    # not passed through (discovery resolves a verified one).
     "tv-seasons": IngestProfile(
         "TV Shows",
-        ["Title Name", "Title", "Series"],
+        ["title", "Title", "Title Name", "Series"],
         {
-            "network": (["Availability / Network", "Studio/Publisher"], _s),
-            "released_on": (["Release Date", "Start Date"], _date),
-            "imdb_id": (["IMDb ttcode", "IMDb URL"], _imdb),
+            "network": (["network_distributor", "Availability / Network",
+                         "Studio/Publisher"], _distributor),
+            "released_on": (["release_date", "Release Date"], _date),
+            "imdb_id": (["imdb_id", "ttcode", "IMDb ttcode", "IMDb URL"], _imdb),
+            "program_type": (["program_type", "Release Type"], _s),
+            "original_language": (["language_type", "Language Type"], _lang),
         },
-        label="TV Seasons & Episodes",
+        label="TV Season & Episode Review",
     ),
     "movie-release-calendar": IngestProfile(
         "Movies",
@@ -389,8 +412,19 @@ def build_ingest_csv(rows: Iterable[dict], profile: IngestProfile) -> bytes:
     mapped = []
     for row in rows:
         ingest = profile.ingest_row(row)
-        if ingest.get(TITLE):
-            mapped.append(ingest)
+        base = _s(ingest.get(TITLE))
+        if not base:
+            continue
+        base = re.sub(r"\s*-\s*DAR\s*$", "", base, flags=re.I).strip()
+        if profile.dar_mode == "both":
+            # owned (non-DAR) row first, then its DAR twin -- the generator
+            # derives Competitive View vs Pristine DAR Brands from the suffix
+            owned = dict(ingest)
+            owned[TITLE] = base
+            mapped.append(owned)
+        dar = dict(ingest)
+        dar[TITLE] = f"{base} - DAR"
+        mapped.append(dar)
     if not mapped:
         raise BdrIngestError(
             "No usable titles were found in this report, so there is nothing to "
