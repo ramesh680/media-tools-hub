@@ -186,6 +186,28 @@ YOUTUBE_RELEASE_COLUMNS = [
     "Lookup Note",
 ]
 
+MOVIE_TRAILER_CHANNEL_COLUMNS = [
+    "Input Title",
+    "Input Release Year",
+    "IMDb ID",
+    "Matched MovieInsider Title",
+    "Status",
+    "Official Channel (Distributor)",
+    "Official Channel ID",
+    "Official Channel Handle",
+    "Official Channel URL",
+    "Channel Type",
+    "Channel Subscribers",
+    "Existing Channel (as provided)",
+    "Existing Channel ID",
+    "Trailer",
+    "Trailer URL",
+    "Trailer Published",
+    "MovieInsider URL",
+    "Resolved Via",
+    "Lookup Note",
+]
+
 TRACKER_TITLES = {
     "tv": "TV Premiere Calendar",
     "imdb": "IMDb-Enriched TV Series Snapshot",
@@ -199,6 +221,7 @@ TRACKER_TITLES = {
     "imdb_verifier": "IMDb Bulk Verification",
     "billboard_artist_100": "Billboard Artist 100",
     "youtube_release_verifier": "YouTube Release Verifier",
+    "movie_trailer_channels": "Movie Trailer Channel Validation",
 }
 
 
