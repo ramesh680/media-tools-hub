@@ -186,26 +186,22 @@ YOUTUBE_RELEASE_COLUMNS = [
     "Lookup Note",
 ]
 
-MOVIE_TRAILER_CHANNEL_COLUMNS = [
-    "Input Title",
-    "Input Release Year",
-    "IMDb ID",
-    "Matched MovieInsider Title",
-    "Status",
-    "Official Channel (Distributor)",
-    "Official Channel ID",
-    "Official Channel Handle",
-    "Official Channel URL",
-    "Channel Type",
-    "Channel Subscribers",
-    "Existing Channel (as provided)",
-    "Existing Channel ID",
+# MovieInsider trailer feed: a straight scrape of the newest /movie-trailers
+# listing pages, exported as-is. No YouTube API, no channel validation - the
+# older distributor-matching tool it replaced is gone (see
+# MOVIE_TRAILER_FEED.md).
+MOVIE_TRAILER_FEED_COLUMNS = [
+    "#",
+    "Title",
     "Trailer",
-    "Trailer URL",
-    "Trailer Published",
+    "YouTube Video ID",
+    "YouTube URL",
+    "Thumbnail URL",
+    "MovieInsider Movie ID",
+    "MovieInsider Slug",
     "MovieInsider URL",
-    "Resolved Via",
-    "Lookup Note",
+    "Source Page",
+    "Page URL",
 ]
 
 TRACKER_TITLES = {
@@ -221,7 +217,7 @@ TRACKER_TITLES = {
     "imdb_verifier": "IMDb Bulk Verification",
     "billboard_artist_100": "Billboard Artist 100",
     "youtube_release_verifier": "YouTube Release Verifier",
-    "movie_trailer_channels": "Movie Trailer Channel Validation",
+    "movie_trailer_feed": "MovieInsider Trailer Feed",
 }
 
 

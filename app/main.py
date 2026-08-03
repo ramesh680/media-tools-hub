@@ -26,7 +26,7 @@ from app.services.jobs import JobManager
 from app.services.metacritic import MetacriticParser, metacritic_url_for_row
 from app.services.validator_history import ValidatorHistoryRepository
 from app.services.validator_jobs import ValidatorJobManager
-from app.services.movie_trailer_channels import MovieTrailerChannelService
+from app.services.movie_trailer_feed import MovieTrailerFeedService
 from app.services.youtube_release_verifier import YouTubeReleaseVerifierService
 
 
@@ -47,14 +47,9 @@ imdb_verifier_service = IMDbBulkVerifierService(imdb_service)
 box_office_service = BoxOfficeMojoService(http_client)
 billboard_service = BillboardArtist100Service(http_client, imdb_service)
 youtube_release_verifier_service = YouTubeReleaseVerifierService(http_client, settings.youtube_api_key)
-# Resolves the distributor channel from the trailer MovieInsider already knows
-# about (~0.02 quota units/title) and only falls back to the search-based
-# verifier above (~101 units/title) for titles MovieInsider has no trailer for.
-movie_trailer_channel_service = MovieTrailerChannelService(
-    http_client,
-    settings.youtube_api_key,
-    fallback_service=youtube_release_verifier_service,
-)
+# Straight scrape of the newest MovieInsider trailer listing pages (first two by
+# default) exported as Excel/CSV. No YouTube API, no channel validation.
+movie_trailer_feed_service = MovieTrailerFeedService(http_client)
 excel_validator_service = ExcelValidatorService(
     http_client,
     metacritic_parser,
@@ -188,32 +183,16 @@ async def start_youtube_release_verifier(
     return _progress_response(request, job.to_dict())
 
 
-@app.post("/movie-trailer-channels/start", response_class=HTMLResponse)
-async def start_movie_trailer_channels(
-    request: Request,
-    bulk_text: str = Form(""),
-    youtube_api_key: str = Form(""),
-    page_budget: str = Form(""),
-    use_fallback: str = Form(""),
-    bulk_file: UploadFile | None = File(None),
-) -> HTMLResponse:
-    filename = bulk_file.filename if bulk_file and bulk_file.filename else ""
-    file_content = await bulk_file.read() if bulk_file and bulk_file.filename else None
-    try:
-        pages = int(page_budget) if page_budget.strip() else None
-    except ValueError:
-        pages = None
+@app.post("/movie-trailer-feed/start", response_class=HTMLResponse)
+async def start_movie_trailer_feed(request: Request) -> HTMLResponse:
+    """Scrape the first two MovieInsider trailer pages. Takes no input at all.
+
+    The page count stays a service-level argument (default 2) rather than a form
+    field: the tool is meant to be one button.
+    """
     job = job_manager.start(
-        "movie_trailer_channels",
-        lambda progress: movie_trailer_channel_service.validate_bulk(
-            bulk_text=bulk_text,
-            file_content=file_content,
-            filename=filename,
-            api_key_override=youtube_api_key,
-            page_budget=pages,
-            use_fallback=use_fallback.strip().lower() in {"1", "on", "true", "yes"},
-            progress=progress,
-        ),
+        "movie_trailer_feed",
+        lambda progress: movie_trailer_feed_service.fetch_feed(progress=progress),
     )
     return _progress_response(request, job.to_dict())
 
