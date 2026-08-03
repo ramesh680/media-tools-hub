@@ -67,7 +67,7 @@
       <li><strong>YouTube Release Verifier:</strong> verify titles against official YouTube channels</li>
       {% endif %}
       <li><strong>Upcoming Release Movies:</strong> live upcoming theatrical release list</li>
-      <li><strong>Trailer Channel Validator:</strong> official distributor YouTube channel per movie</li>
+      <li><strong>MovieInsider Trailer Feed:</strong> newest trailers scraped to Excel</li>
       <li><strong>Exports:</strong> CSV and Excel downloads</li>
     </ul>
   </aside>
@@ -148,33 +148,11 @@
     </article>
 
     <article class="action-card">
-      <p class="eyebrow">Trailers &middot; YouTube</p>
-      <h3>Movie Trailer Channel Validator</h3>
-      <p>Finds the official <strong>distributor</strong> YouTube channel for each movie by starting from the trailer MovieInsider already lists, then checks your existing channel mapping against it. Paste titles or upload a sheet with a <code>title</code> column (add <code>current_channel_url</code> to have it verified). Channels are compared by channel ID, so <code>/channel/UC&hellip;</code>, <code>/@handle</code> and <code>/c/name</code> forms of the same channel all count as a match.</p>
-      <form class="tracker-form" hx-post="/movie-trailer-channels/start" hx-target="#workspace" hx-swap="outerHTML" hx-encoding="multipart/form-data">
-        <label>
-          <span>Titles (one per line, optional <code>Title | channel | year</code>)</span>
-          <textarea name="bulk_text" rows="4" placeholder="Clayface | https://www.youtube.com/@wbpictures | 2026&#10;Camp Rock 3&#10;Coyote vs. ACME"></textarea>
-        </label>
-        <label>
-          <span>Or upload CSV / XLSX</span>
-          <input type="file" name="bulk_file" accept=".csv,.xlsx,.xlsm">
-        </label>
-        <fieldset class="date-controls">
-          <legend>Options</legend>
-          <p class="date-range-hint">Scanning more trailer pages widens coverage of older titles. Each page is one request, 24 trailers.</p>
-          <div class="custom-date-row">
-            <label>
-              <span>Trailer pages to scan</span>
-              <input type="number" name="page_budget" min="1" max="120" value="25">
-            </label>
-            <label class="range-option">
-              <input type="checkbox" name="use_fallback" value="1" checked>
-              <span>Fall back to YouTube search for titles MovieInsider has no trailer for (costs ~101 quota units each, versus ~0.02 via MovieInsider)</span>
-            </label>
-          </div>
-        </fieldset>
-        <button class="primary-button" type="submit">Validate YouTube Channels</button>
+      <p class="eyebrow">Trailers</p>
+      <h3>MovieInsider Trailer Feed</h3>
+      <p>Scrapes the newest movie trailers straight off MovieInsider's <code>/movie-trailers</code> listing and gives you the Excel. Nothing to fill in and nothing to upload - press the button. Always the <strong>first two pages</strong>, 48 trailers, newest first. Each row carries the title, trailer label, YouTube video ID and URL, and the MovieInsider link.</p>
+      <form class="tracker-form" hx-post="/movie-trailer-feed/start" hx-target="#workspace" hx-swap="outerHTML">
+        <button class="primary-button" type="submit">Fetch Trailer Feed</button>
       </form>
     </article>
 
