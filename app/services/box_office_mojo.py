@@ -27,6 +27,7 @@ BOX_OFFICE_MOJO_CHANGES_URL = "https://www.boxofficemojo.com/calendar/changes/"
 # oldest change predates the requested window.
 BOX_OFFICE_MOJO_CHANGES_MAX_PAGES = 12
 BOX_OFFICE_MOJO_TITLE_URL = "https://www.boxofficemojo.com/title/"
+BOX_OFFICE_MOJO_RELEASE_URL = "https://www.boxofficemojo.com/release/"
 BOX_OFFICE_MOJO_WEEKEND_BY_DATE_URL = "https://www.boxofficemojo.com/weekend/by-date/"
 IMDB_SUGGESTION_URL = "https://v2.sg.media-imdb.com/suggestion/{first}/{query}.json"
 
@@ -484,15 +485,49 @@ class BoxOfficeMojoService:
         try:
             html = self.http_client.get_text(source_url)
         except Exception:
-            return row
-        soup = BeautifulSoup(html, "html.parser")
-        opening_detail = _extract_detail_value(soup, "Opening")
-        row["Opening Gross"] = _parse_money(opening_detail)
-        row["Opening Theaters"] = _parse_theaters(opening_detail)
-        if not row["Opening Theaters"]:
-            row["Opening Theaters"] = _parse_theaters(_extract_detail_value(soup, "Widest Release"))
-        row["Domestic Opening Weekend Rank"] = self._domestic_opening_weekend_rank(row)
+            html = ""
+        if html:
+            soup = BeautifulSoup(html, "html.parser")
+            opening_detail = _extract_detail_value(soup, "Opening")
+            row["Opening Gross"] = _parse_money(opening_detail)
+            row["Opening Theaters"] = _parse_theaters(opening_detail)
+            if not row["Opening Theaters"]:
+                row["Opening Theaters"] = _parse_theaters(_extract_detail_value(soup, "Widest Release"))
+
+        # Read the release page's own "Domestic Weekend" tab (the table the user
+        # pointed at: /release/rl#######/weekend/). Its opening-weekend row lists
+        # the Rank, Weekend gross and Theaters directly, so it is the authoritative
+        # source for the opening-weekend rank and a reliable backfill for the
+        # gross/theater figures when the summary page omits them.
+        weekend_stats = self._release_weekend_tab_stats(source_url)
+        if weekend_stats.get("rank"):
+            row["Domestic Opening Weekend Rank"] = weekend_stats["rank"]
+        if not row["Opening Gross"] and weekend_stats.get("weekend_gross"):
+            row["Opening Gross"] = weekend_stats["weekend_gross"]
+        if not row["Opening Theaters"] and weekend_stats.get("theaters"):
+            row["Opening Theaters"] = weekend_stats["theaters"]
+
+        # Fall back to the weekend-by-date chart lookup only if the release page's
+        # own weekend tab did not yield a rank.
+        if not row["Domestic Opening Weekend Rank"]:
+            row["Domestic Opening Weekend Rank"] = self._domestic_opening_weekend_rank(row)
         return row
+
+    def _release_weekend_tab_stats(self, source_url: str) -> dict[str, str]:
+        """Fetch and parse the release page's Domestic Weekend tab.
+
+        Returns {"rank": ..., "weekend_gross": ..., "theaters": ...} for the film's
+        opening weekend (the "Weekend" #1 row, i.e. the first Fri-Sun of the run),
+        or an empty dict when the tab cannot be read.
+        """
+        url = _release_weekend_tab_url(source_url)
+        if not url:
+            return {}
+        try:
+            html = self.http_client.get_text(url)
+        except Exception:
+            return {}
+        return _parse_release_weekend_tab(html)
 
     def _domestic_opening_weekend_rank(self, row: dict[str, str]) -> str:
         """Look up the film's rank on the Box Office Mojo domestic weekend chart for
@@ -607,6 +642,105 @@ def _parse_money(text: str) -> str:
 def _parse_theaters(text: str) -> str:
     match = re.search(r"([\d,]+)\s*theaters?", text or "", flags=re.IGNORECASE)
     return match.group(1) if match else ""
+
+
+def _parse_count(text: str) -> str:
+    """Pull a bare integer (e.g. a theater count "754" or "3,450") from a chart
+    cell that has no "theaters" label of its own."""
+    match = re.search(r"[\d,]+", text or "")
+    return match.group(0) if match else ""
+
+
+def _release_weekend_tab_url(source_url: str) -> str:
+    """Build the "/release/rl#######/weekend/" tab URL from any release URL."""
+    match = re.search(r"/release/rl\d+", str(source_url or ""), flags=re.IGNORECASE)
+    if not match:
+        return ""
+    # match.group(0) is a root-absolute path ("/release/rl...."), so urljoin against
+    # any same-host URL yields "https://www.boxofficemojo.com/release/rl..../weekend/".
+    return urljoin(BOX_OFFICE_MOJO_RELEASE_URL, match.group(0) + "/weekend/")
+
+
+def _select_release_weekend_table(soup: BeautifulSoup):
+    """Pick the Domestic Weekend table on a release page's weekend tab.
+
+    That table carries Rank, Weekend and Theaters columns; match on those header
+    labels so we do not pick up an unrelated table on the page.
+    """
+    for table in soup.find_all("table"):
+        header_text = table.get_text(" ", strip=True).lower()
+        if "rank" in header_text and "theaters" in header_text and "weekend" in header_text:
+            return table
+    return soup.select_one("table.mojo-body-table") or soup.find("table")
+
+
+def _parse_release_weekend_tab(html: str) -> dict[str, str]:
+    """Parse a release page's Domestic Weekend tab and return the opening weekend's
+    Rank, Weekend gross and Theaters.
+
+    The table's columns are Date, Rank, Weekend (gross), %± LW, Theaters, Change,
+    Avg, To Date, Weekend (run number). We map columns by their header labels so a
+    change in column order does not break extraction, and we return the row whose
+    run-number is "1" (the opening weekend). If that column cannot be identified we
+    fall back to the first data row, which Box Office Mojo lists oldest-first.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    table = _select_release_weekend_table(soup)
+    if table is None:
+        return {}
+    table_rows = table.find_all("tr")
+    if not table_rows:
+        return {}
+
+    header_labels = [
+        _clean_text(cell.get_text(" ", strip=True))
+        for cell in table_rows[0].find_all(["th", "td"])
+    ]
+
+    def _first_index(name: str) -> int:
+        for index, label in enumerate(header_labels):
+            if label.lower() == name.lower():
+                return index
+        return -1
+
+    def _last_index(name: str) -> int:
+        found = -1
+        for index, label in enumerate(header_labels):
+            if label.lower() == name.lower():
+                found = index
+        return found
+
+    rank_idx = _first_index("Rank")
+    gross_idx = _first_index("Weekend")  # first "Weekend" header = weekend gross
+    theaters_idx = _first_index("Theaters")
+    run_idx = _last_index("Weekend")  # last "Weekend" header = run/weekend number
+    if rank_idx == -1:
+        return {}
+
+    def _row_stats(cells) -> dict[str, str]:
+        stats = {"rank": _clean_text(cells[rank_idx].get_text(" ", strip=True))}
+        if 0 <= gross_idx < len(cells):
+            stats["weekend_gross"] = _parse_money(cells[gross_idx].get_text(" ", strip=True))
+        if 0 <= theaters_idx < len(cells):
+            stats["theaters"] = _parse_count(cells[theaters_idx].get_text(" ", strip=True))
+        return stats
+
+    first_row_stats: dict[str, str] | None = None
+    for table_row in table_rows[1:]:
+        cells = table_row.find_all(["td", "th"])
+        if len(cells) <= rank_idx:
+            continue
+        rank = _clean_text(cells[rank_idx].get_text(" ", strip=True))
+        if not re.fullmatch(DIGITS_PATTERN, rank):
+            continue
+        if first_row_stats is None:
+            first_row_stats = _row_stats(cells)
+        # Prefer the opening weekend (run number "1") when we can read that column.
+        if run_idx != -1 and run_idx != gross_idx and 0 <= run_idx < len(cells):
+            run_number = _clean_text(cells[run_idx].get_text(" ", strip=True))
+            if run_number == "1":
+                return _row_stats(cells)
+    return first_row_stats or {}
 
 
 def _opening_weekend_sunday(release_date: date) -> date:
