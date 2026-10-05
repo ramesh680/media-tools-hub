@@ -471,53 +471,11 @@ class IMDbEnrichmentService:
 
         result: dict[str, Any] | None = None
         try:
-            search_params: dict[str, Any] = {
-                "query": title,
-                "include_adult": "false",
-                "language": "en-US",
-            }
-            if release_year.isdigit():
-                search_params["first_air_date_year"] = release_year
-            if self.tmdb_api_key:
-                search_params["api_key"] = self.tmdb_api_key
-            results = self._tmdb_get_json(
-                "https://api.themoviedb.org/3/search/tv", search_params
-            ).get("results", [])[:6]
-
-            normalized_target = normalize_title(title)
-            best_score = -1.0
-            best_details: dict[str, Any] | None = None
-            best_name = ""
-            for candidate in results:
-                tmdb_id = candidate.get("id")
-                if not tmdb_id:
-                    continue
-                detail_params: dict[str, Any] = {
-                    "append_to_response": "external_ids",
-                    "language": "en-US",
-                }
-                if self.tmdb_api_key:
-                    detail_params["api_key"] = self.tmdb_api_key
-                details = self._tmdb_get_json(
-                    f"https://api.themoviedb.org/3/tv/{tmdb_id}", detail_params
-                )
-                candidate_name = details.get("name") or details.get("original_name") or ""
-                score = SequenceMatcher(None, normalized_target, normalize_title(candidate_name)).ratio() * 100
-                first_air = (details.get("first_air_date") or "")[:4]
-                if release_year.isdigit() and first_air.isdigit():
-                    if first_air == release_year:
-                        score += 25
-                    elif abs(int(first_air) - int(release_year)) <= 1:
-                        score += 10
-                if score <= best_score:
-                    continue
-                best_score = score
-                best_details = details
-                best_name = candidate_name
-            # Require a reasonable title similarity before accepting the match.
-            if best_details is not None and best_score >= 45:
+            best = self._tmdb_best_tv_match(metacritic_row, preferred_season)
+            if best is not None:
+                details, candidate_name, score = best
                 result = self._season_fields_from_tmdb_details(
-                    best_details, best_name, best_score, preferred_season
+                    details, candidate_name, score, preferred_season
                 )
         except Exception:
             result = None
@@ -533,7 +491,7 @@ class IMDbEnrichmentService:
         preferred_season: int | None = None,
     ) -> dict[str, Any]:
         external_ids = details.get("external_ids") or {}
-        ttcode = external_ids.get("imdb_id") or details.get("imdb_id") or ""
+        ttcode = _valid_ttcode(external_ids.get("imdb_id") or details.get("imdb_id"))
 
         seasons = [item for item in (details.get("seasons") or []) if isinstance(item, dict)]
         real_seasons = [
@@ -576,12 +534,85 @@ class IMDbEnrichmentService:
             "latest_season_episode_count": latest_season_episode_count,
             "season_air_date": season_air_date,
             "last_air_date": last_air_date,
-            "note": (
-                f"Matched via TMDB (\"{candidate_name}\")."
-                if score >= 60
-                else f"Low-confidence TMDB match (\"{candidate_name}\")."
-            ),
+            "note": _tmdb_match_note(candidate_name, score),
         }
+
+    def _tmdb_best_tv_match(
+        self,
+        metacritic_row: dict[str, str],
+        preferred_season: int | None = None,
+    ) -> tuple[dict[str, Any], str, float] | None:
+        """Pick the TMDB series a Metacritic TV row is about.
+
+        Fixes (Oct 2026) for wrong IMDb codes:
+        - The Metacritic date is the SEASON premiere, not the show's first air
+          date. Searching only with first_air_date_year=<premiere year> hid
+          every returning series (Season 2+) and the best of the leftovers --
+          a different, newer show -- was accepted. Now both a year-filtered and
+          an unfiltered search are pooled.
+        - The year is checked against the matching SEASON's air date (or the
+          first air date for a new show), and a show that did not exist yet
+          in that year is penalised.
+        - The Metacritic network must agree with TMDB's networks when both
+          are known.
+        - The title-similarity floor rose from 45 to 85 (70 when the year or
+          network also agrees); below that the ttcode is left blank for
+          review instead of guessing.
+        """
+        title = (metacritic_row.get("Title Name", "") or "").strip()
+        if not title:
+            return None
+        release_year_raw = (metacritic_row.get("Release Date", "") or "")[:4]
+        release_year = int(release_year_raw) if release_year_raw.isdigit() else None
+        wanted_networks = _network_keys(metacritic_row.get("Availability / Network", ""))
+
+        candidate_ids: list[Any] = []
+        searches: list[dict[str, Any]] = []
+        base = {"query": title, "include_adult": "false", "language": "en-US"}
+        if release_year:
+            searches.append({**base, "first_air_date_year": str(release_year)})
+        searches.append(dict(base))
+        for params in searches:
+            if self.tmdb_api_key:
+                params["api_key"] = self.tmdb_api_key
+            for item in self._tmdb_get_json(
+                "https://api.themoviedb.org/3/search/tv", params
+            ).get("results", [])[:6]:
+                if item.get("id") and item["id"] not in candidate_ids:
+                    candidate_ids.append(item["id"])
+
+        normalized_target = normalize_title(title)
+        best: tuple[dict[str, Any], str, float] | None = None
+        best_rank = -1e9
+        for tmdb_id in candidate_ids[:10]:
+            detail_params: dict[str, Any] = {"append_to_response": "external_ids", "language": "en-US"}
+            if self.tmdb_api_key:
+                detail_params["api_key"] = self.tmdb_api_key
+            details = self._tmdb_get_json(f"https://api.themoviedb.org/3/tv/{tmdb_id}", detail_params)
+            names = [details.get("name") or "", details.get("original_name") or ""]
+            candidate_name = names[0] or names[1]
+            sim = max(
+                SequenceMatcher(None, normalized_target, normalize_title(n)).ratio() * 100
+                for n in names if n
+            ) if any(names) else 0.0
+            year_points = _tmdb_year_points(details, release_year, preferred_season)
+            net_points = 0
+            if wanted_networks:
+                have = {_network_key(n.get("name", "")) for n in (details.get("networks") or [])
+                        if isinstance(n, dict)}
+                have.discard("")
+                if have & wanted_networks:
+                    net_points = 20
+                elif have:
+                    net_points = -10
+            accepted = sim >= 85 or (sim >= 70 and (year_points > 0 or net_points > 0))
+            if not accepted or year_points <= -30:
+                continue
+            rank = sim + year_points + net_points
+            if rank > best_rank:
+                best_rank = rank
+                best = (details, candidate_name, sim)
+        return best
 
 
     def _omdb_tv_lookup(self, metacritic_row: dict[str, str]) -> dict[str, str] | None:
@@ -689,64 +720,19 @@ class IMDbEnrichmentService:
 
         result: dict[str, str | int] | None = None
         try:
-            search_params: dict[str, Any] = {
-                "query": title,
-                "include_adult": "false",
-                "language": "en-US",
-            }
-            if release_year.isdigit():
-                search_params["first_air_date_year"] = release_year
-            if self.tmdb_api_key:
-                search_params["api_key"] = self.tmdb_api_key
-            results = self._tmdb_get_json(
-                "https://api.themoviedb.org/3/search/tv", search_params
-            ).get("results", [])[:6]
-
-            normalized_target = normalize_title(title)
-            best_score = -1.0
-            best: dict[str, str | int] | None = None
-            for candidate in results:
-                tmdb_id = candidate.get("id")
-                if not tmdb_id:
-                    continue
-                detail_params: dict[str, Any] = {
-                    "append_to_response": "external_ids",
-                    "language": "en-US",
-                }
-                if self.tmdb_api_key:
-                    detail_params["api_key"] = self.tmdb_api_key
-                details = self._tmdb_get_json(
-                    f"https://api.themoviedb.org/3/tv/{tmdb_id}", detail_params
-                )
-                candidate_name = details.get("name") or details.get("original_name") or ""
-                score = SequenceMatcher(None, normalized_target, normalize_title(candidate_name)).ratio() * 100
-                first_air = (details.get("first_air_date") or "")[:4]
-                if release_year.isdigit() and first_air.isdigit():
-                    if first_air == release_year:
-                        score += 25
-                    elif abs(int(first_air) - int(release_year)) <= 1:
-                        score += 10
-                if score <= best_score:
-                    continue
-                external_ids = details.get("external_ids") or {}
-                best_score = score
-                best = {
-                    "ttcode": external_ids.get("imdb_id") or "",
+            best = self._tmdb_best_tv_match(metacritic_row, None)
+            if best is not None:
+                details, candidate_name, score = best
+                result = {
+                    "ttcode": _valid_ttcode((details.get("external_ids") or {}).get("imdb_id")),
                     "total_seasons": details.get("number_of_seasons") or "",
                     "total_episodes": details.get("number_of_episodes") or "",
                     "season_air_date": _parse_iso_date(details.get("first_air_date") or ""),
                     "last_air_date": _parse_iso_date(
                         (details.get("last_episode_to_air") or {}).get("air_date") or ""
                     ),
-                    "note": (
-                        f"Matched via TMDB (\"{candidate_name}\")."
-                        if score >= 60
-                        else f"Low-confidence TMDB match (\"{candidate_name}\")."
-                    ),
+                    "note": _tmdb_match_note(candidate_name, score),
                 }
-            # Require a reasonable title similarity before accepting the match.
-            if best is not None and best_score >= 45:
-                result = best
         except Exception:
             result = None
 
@@ -1450,6 +1436,81 @@ class IMDbEnrichmentService:
     def _is_stale(self, path: Path) -> bool:
         age_seconds = time.time() - path.stat().st_mtime
         return age_seconds > self.max_age_days * 24 * 60 * 60
+
+
+_NETWORK_ALIASES = {
+    "max": "hbo max",
+    "hbo": "hbo max",
+    "amazon prime video": "prime video",
+    "amazon": "prime video",
+    "amazon freevee": "freevee",
+    "apple tv": "apple tv",
+    "the roku channel": "roku channel",
+    "usa": "usa network",
+    "national geographic": "nat geo",
+    "fox": "fox",
+}
+
+
+def _network_key(name: str) -> str:
+    key = re.sub(r"[+!]", "", str(name or "")).strip().lower()
+    key = re.sub(r"\s+", " ", key)
+    return _NETWORK_ALIASES.get(key, key)
+
+
+def _network_keys(availability: str) -> set[str]:
+    keys = {_network_key(part) for part in re.split(r"[;,/]", availability or "")}
+    keys.discard("")
+    keys.discard("rent/buy")
+    keys.discard("rentbuy")
+    return keys
+
+
+def _valid_ttcode(value: Any) -> str:
+    value = str(value or "").strip()
+    return value if re.fullmatch(r"tt\d{7,9}", value) else ""
+
+
+def _tmdb_match_note(candidate_name: str, score: float) -> str:
+    if score >= 90:
+        return f"Matched via TMDB (\"{candidate_name}\")."
+    return f"Low-confidence TMDB match (\"{candidate_name}\") -- verify the IMDb code."
+
+
+def _tmdb_year_points(details: dict[str, Any], release_year: int | None,
+                      season: int | None) -> int:
+    """How well a TMDB series fits the premiere year of the Metacritic row."""
+    if not release_year:
+        return 0
+    first = (details.get("first_air_date") or "")[:4]
+    first_year = int(first) if first.isdigit() else None
+    if first_year and first_year > release_year + 1:
+        return -30  # the show did not exist yet
+    season_years: dict[int, int] = {}
+    for item in details.get("seasons") or []:
+        if not isinstance(item, dict):
+            continue
+        num = _safe_int(str(item.get("season_number")))
+        air = (item.get("air_date") or "")[:4]
+        if num and num >= 1 and air.isdigit():
+            season_years[num] = int(air)
+    if season and season > 1:
+        year = season_years.get(season)
+        if year is None:
+            top = max(season_years) if season_years else (_safe_int(str(details.get("number_of_seasons"))) or 0)
+            # a show with far fewer seasons is not the one returning for season N
+            return -30 if top and top < season - 1 else 0
+        if year == release_year:
+            return 25
+        return 10 if abs(year - release_year) <= 1 else -20
+    years = set(season_years.values())
+    if first_year:
+        years.add(first_year)
+    if release_year in years:
+        return 25
+    if any(abs(y - release_year) <= 1 for y in years):
+        return 10
+    return -10
 
 
 def normalize_title(value: str) -> str:
