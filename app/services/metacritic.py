@@ -114,7 +114,7 @@ NETWORK_MARKERS = [
     "Showtime",
     "Lifetime",
     "Discovery",
-    "Food",
+    "Food Network",
     "TLC",
     "Bravo",
     "Oxygen",
@@ -138,10 +138,70 @@ NETWORK_MARKERS = [
     "Starz",
     "BET+",
     "YouTube",
+    # added Oct 2026 -- these networks were missing, so their rows came back
+    # with a blank or wrong network
+    "HBO",
+    "AMC+",
+    "Crunchyroll",
+    "USA Network",
+    "USA",
+    "E!",
+    "Syfy",
+    "TBS",
+    "TNT",
+    "Freeform",
+    "Comedy Central",
+    "Cartoon Network",
+    "Adult Swim",
+    "Paramount Network",
+    "MTV",
+    "VH1",
+    "BET",
+    "OWN",
+    "IFC",
+    "Sundance Now",
+    "Hallmark Channel",
+    "Hallmark+",
+    "HGTV",
+    "Investigation Discovery",
+    "Animal Planet",
+    "Travel Channel",
+    "Vice TV",
+    "Shudder",
+    "Tubi",
+    "Pluto TV",
+    "Nickelodeon",
+    "Disney Channel",
+    "Disney Jr.",
+    "Telemundo",
+    "Univision",
+    "ESPN",
+    "CNN",
+    "Fox Nation",
     "RENT/BUY",
 ]
 
+# Same network written two ways -> one label. Case-insensitive keys.
+NETWORK_CANONICAL = {
+    "fox": "Fox",
+    "roku channel": "The Roku Channel",
+    "national geographic": "Nat Geo",
+    "usa": "USA Network",
+    "rent/buy": "RENT/BUY",
+}
+# Markers that are also ordinary words: they count only when written with a
+# capital (as a network name), never inside prose like 'the history of ...'.
+CASE_SENSITIVE_MARKERS = {"History", "Discovery", "OWN", "USA", "E!", "BET"}
+
 STREAMING_NETWORKS = {
+    "AMC+",
+    "Crunchyroll",
+    "Shudder",
+    "Tubi",
+    "Pluto TV",
+    "Sundance Now",
+    "Hallmark+",
+    "Fox Nation",
     "Prime Video",
     "Apple TV+",
     "Apple TV",
@@ -622,6 +682,9 @@ def _parse_tv_table_row(table_row, release_date: date) -> dict[str, str] | None:
 
     genre, details = _parse_genre_and_details(remainder)
     availability = _normalize_ws(availability_cell.get_text(" ")) if availability_cell else ""
+    if availability:
+        # the cell can carry extra words; keep the recognised network names
+        availability = _find_networks(availability) or availability
     if not availability:
         availability = _find_networks(cell_text)
     if not genre:
@@ -1054,13 +1117,39 @@ def _strip_known_network_suffix(line: str) -> str:
 
 
 def _find_networks(text: str) -> str:
-    found: list[str] = []
+    """Networks named in `text`, in the order they appear (the primary
+    network first, e.g. 'Starz (also on Hulu)' -> 'Starz; Hulu').
+
+    The longest marker wins where markers overlap, so 'Apple TV+' is not also
+    reported as 'Apple TV', 'Discovery+' as 'Discovery', 'HBO Max' as 'HBO',
+    or 'The Roku Channel' as 'Roku Channel'. Variant spellings collapse to one
+    label ('FOX' -> 'Fox')."""
+    text = text or ""
+    hits: list[tuple[int, int, str]] = []
     for marker in NETWORK_MARKERS:
-        if _marker_search(marker, text):
-            canonical = "RENT/BUY" if marker.upper() == "RENT/BUY" else marker
-            if canonical not in found:
-                found.append(canonical)
+        for match in _marker_finditer(marker, text):
+            hits.append((match.start(), match.end(), marker))
+    # longest first, then earliest; drop anything overlapping a kept span
+    hits.sort(key=lambda h: (-(h[1] - h[0]), h[0]))
+    kept: list[tuple[int, int, str]] = []
+    for start, end, marker in hits:
+        if any(start < k_end and k_start < end for k_start, k_end, _ in kept):
+            continue
+        kept.append((start, end, marker))
+    kept.sort(key=lambda h: h[0])
+    found: list[str] = []
+    for _, _, marker in kept:
+        canonical = NETWORK_CANONICAL.get(marker.lower(), marker)
+        if canonical not in found:
+            found.append(canonical)
     return "; ".join(found)
+
+
+def _marker_finditer(marker: str, text: str):
+    # a trailing '+' belongs to a different network ('AMC' vs 'AMC+')
+    pattern = r"(?<![A-Za-z0-9])" + re.escape(marker) + r"(?![A-Za-z0-9+])"
+    flags = 0 if marker in CASE_SENSITIVE_MARKERS else re.IGNORECASE
+    return re.finditer(pattern, text, flags=flags)
 
 
 def _line_is_only_network(line: str) -> bool:
@@ -1075,8 +1164,9 @@ def _starts_with_network(line: str) -> bool:
 
 def _marker_search(marker: str, text: str, start_only: bool = False):
     prefix = r"^" if start_only else r"(?<![A-Za-z0-9])"
-    pattern = prefix + re.escape(marker) + r"(?![A-Za-z0-9])"
-    return re.search(pattern, text, flags=re.IGNORECASE)
+    pattern = prefix + re.escape(marker) + r"(?![A-Za-z0-9+])"
+    flags = 0 if marker in CASE_SENSITIVE_MARKERS else re.IGNORECASE
+    return re.search(pattern, text, flags=flags)
 
 
 def _looks_like_tv_title_line(text: str, current_item: list[str]) -> bool:
