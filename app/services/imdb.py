@@ -125,7 +125,9 @@ class IMDbEnrichmentService:
         summary = (
             f"Scanned Metacritic rows from {start_date.isoformat()} through {end_date.isoformat()}. "
             f"Filtered rows: {len(filtered_rows)}. Matched to IMDb: {matched}. "
-            f"Manual review needed: {manual_review}. Release date comes from Metacritic because "
+            f"Manual review needed: {manual_review}. Latest Season Episodes counts only the latest "
+            "season (or the season the Metacritic row links to), not the whole series. "
+            "Release date comes from Metacritic because "
             "IMDb title.basics mainly provides start year."
         )
         return {
@@ -228,7 +230,7 @@ class IMDbEnrichmentService:
         """IMDb-Enriched TV Series snapshot built from the TMDB API.
 
         This is the free-tier path: it produces the same columns as
-        ``fetch_snapshot`` (ttcode, Total Seasons, Total Episodes) but sources
+        ``fetch_snapshot`` (ttcode, Total Seasons, Latest Season Episodes) but sources
         them live from TMDB instead of the multi-GB local IMDb index, so it runs
         on a hosted free instance with only a TMDB API key configured.
         """
@@ -292,8 +294,10 @@ class IMDbEnrichmentService:
         summary = (
             f"Scanned Metacritic TV rows from {start_date.isoformat()} through {end_date.isoformat()}. "
             f"Filtered rows: {len(filtered_rows)}. Matched on TMDB: {matched}. "
-            "Total Seasons, Total Episodes, and the IMDb ttcode come from the TMDB API "
-            "(free-tier source; no local IMDb index). Release date comes from Metacritic. "
+            "Total Seasons, Latest Season Episodes, and the IMDb ttcode come from the TMDB API "
+            "(free-tier source; no local IMDb index). Latest Season Episodes counts only the "
+            "latest season (or the season the Metacritic row links to), not the whole series. "
+            "Release date comes from Metacritic. "
             "A few obscure or ambiguous titles may be blank when TMDB has no confident match."
         )
         return {
@@ -684,10 +688,22 @@ class IMDbEnrichmentService:
                 total_seasons = str(data.get("totalSeasons", "") or "")
                 if total_seasons in {"N/A", "None"}:
                     total_seasons = ""
+                omdb_ttcode = str(data.get("imdbID", "") or "")
+                latest_season_episodes: int | str = ""
+                season_number = _safe_int(total_seasons)
+                if season_number:
+                    try:
+                        season_data = self._omdb_get_json({"i": omdb_ttcode, "Season": season_number})
+                        episodes = season_data.get("Episodes") or []
+                        latest_season_episodes = len(
+                            {str(ep.get("Episode")) for ep in episodes if isinstance(ep, dict)}
+                        ) or ""
+                    except Exception:
+                        latest_season_episodes = ""
                 result = {
-                    "ttcode": str(data.get("imdbID", "") or ""),
+                    "ttcode": omdb_ttcode,
                     "total_seasons": total_seasons,
-                    "total_episodes": "",
+                    "total_episodes": latest_season_episodes,
                     "note": f"Matched via OMDb (\"{cand_name}\").",
                 }
         except Exception:
@@ -720,13 +736,21 @@ class IMDbEnrichmentService:
 
         result: dict[str, str | int] | None = None
         try:
-            best = self._tmdb_best_tv_match(metacritic_row, None)
+            preferred_season = _season_from_metacritic_url(metacritic_row.get("Source URL", ""))
+            best = self._tmdb_best_tv_match(metacritic_row, preferred_season)
             if best is not None:
                 details, candidate_name, score = best
+                latest_season, latest_season_episodes = _tmdb_latest_season_stats(details, preferred_season)
+                total_seasons = _safe_int(str(details.get("number_of_seasons"))) or 0
                 result = {
                     "ttcode": _valid_ttcode((details.get("external_ids") or {}).get("imdb_id")),
-                    "total_seasons": details.get("number_of_seasons") or "",
-                    "total_episodes": details.get("number_of_episodes") or "",
+                    "total_seasons": max(total_seasons, latest_season or 0) or "",
+                    # Episodes in the latest (or Metacritic-linked) season only,
+                    # not the whole-series total.
+                    "total_episodes": max(
+                        latest_season_episodes,
+                        _known_episode_count_override(metacritic_row, latest_season),
+                    ) or "",
                     "season_air_date": _parse_iso_date(details.get("first_air_date") or ""),
                     "last_air_date": _parse_iso_date(
                         (details.get("last_episode_to_air") or {}).get("air_date") or ""
@@ -1126,14 +1150,21 @@ class IMDbEnrichmentService:
         expected_type = "tvMiniSeries" if metacritic_row.get("Release Type") == "Limited Series" else "tvSeries"
         counts = connection.execute(
             """
-            SELECT
-                COUNT(*) AS episode_count,
-                COUNT(DISTINCT NULLIF(season_number, '')) AS season_count
+            SELECT COUNT(DISTINCT NULLIF(season_number, '')) AS season_count
             FROM episodes
             WHERE parent_tconst = ?
             """,
             (chosen["tconst"],),
         ).fetchone()
+        latest_season, latest_season_episodes = self._latest_season_episode_stats(
+            connection,
+            chosen["tconst"],
+            _season_from_metacritic_url(metacritic_row.get("Source URL", "")),
+        )
+        latest_season_episodes = max(
+            latest_season_episodes,
+            _known_episode_count_override(metacritic_row, latest_season),
+        )
         release_year = metacritic_row["Release Date"][:4]
         notes: list[str] = ["Exact normalized title match."]
         if chosen["title_type"] != expected_type:
@@ -1145,8 +1176,8 @@ class IMDbEnrichmentService:
         return self._output_row(
             metacritic_row,
             chosen["tconst"],
-            counts["season_count"] or "",
-            counts["episode_count"] or "",
+            max(counts["season_count"] or 0, latest_season or 0) or "",
+            latest_season_episodes or "",
             " ".join(notes),
             end_date_display=end_disp,
         )
@@ -1397,7 +1428,7 @@ class IMDbEnrichmentService:
             "Release Date": metacritic_row.get("Release Date", ""),
             "End Date": end_date_display,
             "Total Seasons": total_seasons,
-            "Total Episodes": total_episodes,
+            "Latest Season Episodes": total_episodes,
             "ttcode": ttcode,
             "Release Type": metacritic_row.get("Release Type", ""),
             "Daypart": metacritic_row.get("Daypart", ""),
@@ -1819,6 +1850,37 @@ def _clean_imdb_value(value: str | None) -> str:
     if not value or value == r"\N":
         return ""
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _tmdb_latest_season_stats(
+    details: dict[str, Any], preferred_season: int | None = None
+) -> tuple[int | None, int]:
+    """Return (season_number, episode_count) for the season a row is about.
+
+    Uses the Metacritic-linked season when TMDB has it; otherwise the highest
+    numbered real season that has episodes (skipping announced-but-empty
+    future seasons and season 0 "Specials").
+    """
+    seasons = [
+        item
+        for item in (details.get("seasons") or [])
+        if isinstance(item, dict) and (_safe_int(str(item.get("season_number"))) or 0) >= 1
+    ]
+    if preferred_season:
+        for item in seasons:
+            if _safe_int(str(item.get("season_number"))) == preferred_season:
+                count = _safe_int(str(item.get("episode_count"))) or 0
+                if count:
+                    return preferred_season, count
+    with_episodes = [item for item in seasons if (_safe_int(str(item.get("episode_count"))) or 0) > 0]
+    pool = with_episodes or seasons
+    if not pool:
+        return None, 0
+    latest = max(pool, key=lambda item: _safe_int(str(item.get("season_number"))) or 0)
+    return (
+        _safe_int(str(latest.get("season_number"))),
+        _safe_int(str(latest.get("episode_count"))) or 0,
+    )
 
 
 def _season_from_metacritic_url(source_url: str) -> int | None:
