@@ -81,3 +81,24 @@ def test_network_extraction():
     assert _find_networks("Drama: AMC+") == "AMC+"
     assert _find_networks("Anime: Crunchyroll") == "Crunchyroll"
     assert _find_networks("Comedy: USA Network") == "USA Network"
+
+
+CHICAGO_FIRE = {  # 15 seasons, 299 episodes overall; Season 15 has 5 so far
+    "id": 3, "name": "Chicago Fire", "first_air_date": "2012-10-10",
+    "external_ids": {"imdb_id": "tt2261391"}, "networks": [{"name": "NBC"}],
+    "number_of_seasons": 15, "number_of_episodes": 299,
+    "seasons": [{"season_number": 0, "air_date": "2013-01-01", "episode_count": 12}]
+    + [{"season_number": n, "air_date": f"{2011 + n}-10-01", "episode_count": 22} for n in range(1, 15)]
+    + [{"season_number": 15, "air_date": "2026-09-30", "episode_count": 5},
+       {"season_number": 16, "air_date": None, "episode_count": 0}],
+}
+
+
+def test_imdb_enriched_uses_latest_season_episode_count(tmp_path):
+    svc = _svc(tmp_path, lambda p: [{"id": 3}], {3: CHICAGO_FIRE})
+    got = svc._tmdb_tv_lookup(_row("Chicago Fire", "2026-09-30", "NBC"))
+    assert got["ttcode"] == "tt2261391"
+    assert got["total_episodes"] == 5  # not 299
+    row = svc._output_row(_row("Chicago Fire", "2026-09-30", "NBC"), got["ttcode"],
+                          got["total_seasons"], got["total_episodes"], got["note"])
+    assert row["Latest Season Episodes"] == 5
