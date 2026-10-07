@@ -144,7 +144,7 @@ IMDB_COLUMNS = [
     "Title Name",
     "Release Date",
     "Total Seasons",
-    "Total Episodes",
+    "Latest Season Episodes",
     "ttcode",
     "Release Type",
     *TV_MATRIX_COLUMNS,
