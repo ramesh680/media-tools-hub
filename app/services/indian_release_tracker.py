@@ -16,8 +16,14 @@ Run modes (same as the skill's menu):
 Server-side sources (all public, no login):
   * Wikipedia "List of <Language> films of <Year>" tables (MediaWiki API, CC BY-SA)
   * Wikipedia OTT-originals lists for TV shows (Netflix India, Prime Video India, JioHotstar)
-  * IMDb India release calendar (page JSON + IMDb's public GraphQL) - best effort: IMDb may
-    refuse datacentre traffic; the run then notes it and continues
+  * IMDb Advanced Title Search (IMDb's public GraphQL, the API behind imdb.com/search/title):
+    every title with India as a country of origin released in the window - movies + TV movies,
+    and TV series + mini-series - with director, cast, producers, production companies (Studio),
+    streaming/TV distributors (Network), runtime and certificate. Best effort: IMDb may refuse
+    datacentre traffic; the run then notes it and continues
+  * TMDB (TMDB_API_KEY / TMDB_READ_ACCESS_TOKEN) and OMDb (OMDB_API_KEY) - the hub's existing keys -
+    fill missing IMDb IDs, genres, directors, cast, production companies, TV networks and the
+    India streaming provider, so rows carry what the BDR ingest template needs
   * Wikidata SPARQL (CC0) to resolve uploaded titles <-> IMDb IDs, studio, network
   * YouTube search results page (no key) for the trailer + Top 3 channels; YouTube Data API v3
     (YOUTUBE_API_KEY or the per-run key) as a fallback when the results page is blocked
@@ -71,9 +77,10 @@ MONTHS = {m: i for i, m in enumerate(
 
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
-IMDB_CALENDAR = "https://www.imdb.com/calendar/?region=IN&type=MOVIE"
 IMDB_GRAPHQL = "https://caching.graphql.imdb.com/"
 YT_RESULTS = "https://www.youtube.com/results?search_query="
+TMDB_API = "https://api.themoviedb.org/3"
+OMDB_API = "https://www.omdbapi.com/"
 YT_API_SEARCH = "https://www.googleapis.com/youtube/v3/search"
 YT_API_CHANNELS = "https://www.googleapis.com/youtube/v3/channels"
 CBFC_HOME = "https://www.cbfcindia.gov.in/"
@@ -92,6 +99,35 @@ YOUTUBE_WORKERS = 4
 YOUTUBE_MAX_TITLES = 600
 YOUTUBE_API_MAX_TITLES = 25          # 3 searches x 100 quota units each -> ~7.5k units
 CBFC_MAX_TITLES = 150
+IMDB_SEARCH_PAGE = 250
+IMDB_SEARCH_MAX_PAGES = 24            # 6,000 titles per kind is plenty for India in any window
+TMDB_MAX_TITLES = 900
+TMDB_WORKERS = 6
+OMDB_MAX_TITLES = 150                 # free OMDb key: 1,000 requests a day
+
+LANG_CODES = {"Hindi": "hi", "Tamil": "ta", "Telugu": "te", "Malayalam": "ml", "Kannada": "kn",
+              "Marathi": "mr", "Bengali": "bn", "Gujarati": "gu", "Punjabi": "pa", "Odia": "or",
+              "Bhojpuri": "bho", "Assamese": "as", "Tulu": "tcy", "Urdu": "ur", "English": "en"}
+CODE_LANGS = {v: k for k, v in LANG_CODES.items()}
+IMDB_MOVIE_TYPES = ["movie", "tvMovie"]
+IMDB_TV_TYPES = ["tvSeries", "tvMiniSeries"]
+IMDB_FIELDS = (
+    "id titleText{text} titleType{id} releaseDate{day month year} genres{genres{text}} "
+    "spokenLanguages{spokenLanguages{text}} countriesOfOrigin{countries{id}} "
+    'directors:credits(first:3,filter:{categories:["director"]}){edges{node{name{nameText{text}}}}} '
+    'cast:credits(first:3,filter:{categories:["actor","actress"]}){edges{node{name{nameText{text}}}}} '
+    'producers:credits(first:3,filter:{categories:["producer"]}){edges{node{name{nameText{text}}}}} '
+    'prod:companyCredits(first:3,filter:{categories:["production"]}){edges{node{company{companyText{text}}}}} '
+    'dist:companyCredits(first:12,filter:{categories:["distribution"]}){edges{node{company{companyText{text}}}}} '
+    "runtime{seconds} certificate{rating}")
+IMDB_SEARCH_QUERY = (
+    "query($types:[String!]!,$start:Date,$end:Date,$after:String,$first:Int!){"
+    "advancedTitleSearch(first:$first,after:$after,constraints:{"
+    "titleTypeConstraint:{anyTitleTypeIds:$types},"
+    "releaseDateConstraint:{releaseDateRange:{start:$start,end:$end}},"
+    'originCountryConstraint:{allCountries:["IN"]}},'
+    "sort:{sortBy:RELEASE_DATE,sortOrder:ASC}){total pageInfo{hasNextPage endCursor} "
+    "edges{node{title{" + IMDB_FIELDS + "}}}}}")
 
 
 # --------------------------------------------------------------------------------------------
@@ -520,9 +556,13 @@ def to_date(value: Any) -> date | None:
 # the service
 # --------------------------------------------------------------------------------------------
 class IndianReleaseTrackerService:
-    def __init__(self, http_client, youtube_api_key: str = "") -> None:
+    def __init__(self, http_client, youtube_api_key: str = "", tmdb_api_key: str = "",
+                 tmdb_read_access_token: str = "", omdb_api_key: str = "") -> None:
         self.http = http_client
         self.youtube_api_key = youtube_api_key
+        self.tmdb_api_key = tmdb_api_key
+        self.tmdb_token = tmdb_read_access_token
+        self.omdb_api_key = omdb_api_key
         self.notes: list[str] = []
 
     # -- HTTP --------------------------------------------------------------------------------
@@ -559,7 +599,7 @@ class IndianReleaseTrackerService:
         coverage: list[dict[str, str]] = []
         if not only_list:
             years = list(range(start.year, end.year + 1))
-            groups.append(self._imdb_calendar(today, progress))
+            groups.append(self._imdb_advanced_search(start, end, include_tv, languages, today, progress))
             groups.append(self._wikipedia_films(languages, years, today, progress))
             if include_tv:
                 groups.append(self._wikipedia_tv(today, progress))
@@ -570,6 +610,9 @@ class IndianReleaseTrackerService:
         progress(55, "Merging sources")
         titles = filter_window(merge_titles(groups), start, end, keep_tba, only_list)
         titles.sort(key=lambda t: (t.sort_date or "9999-12-31", t.title.lower()))
+
+        self._tmdb_enrich(titles, today, progress)
+        self._omdb_enrich(titles, progress)
 
         self._youtube(titles, youtube_scope, today, api_key_override or self.youtube_api_key, progress)
         if check_cbfc:
@@ -590,8 +633,17 @@ class IndianReleaseTrackerService:
             summary += f" Custom notes: {clean(notes)}."
         if self.notes:
             summary += " Notes: " + " ".join(self.notes)
-        sections = [{"key": "titles", "title": "Indian Regional Titles", "columns": TITLE_COLUMNS,
-                     "rows": rows, "row_count": len(rows), "supports_google": True}]
+        movie_rows = [r for r in rows if r["Category"] == "Movie"]
+        tv_rows = [r for r in rows if r["Category"] != "Movie"]
+        # Two tables so each gets its own BDR ingest template (Movies / TV Shows) - the ingest
+        # export maps a section's tracker_type to one title category.
+        sections = [{"key": "movies", "title": "Indian Regional Movies", "columns": TITLE_COLUMNS,
+                     "rows": movie_rows, "row_count": len(movie_rows), "supports_google": True,
+                     "tracker_type": TRACKER_TYPE + "_movies"}]
+        if tv_rows or not only_list:
+            sections.append({"key": "tv_shows", "title": "Indian Regional TV Shows", "columns": TITLE_COLUMNS,
+                             "rows": tv_rows, "row_count": len(tv_rows), "supports_google": True,
+                             "tracker_type": TRACKER_TYPE + "_tv"})
         if coverage:
             sections.append({"key": "source_coverage", "title": "Source Coverage (uploaded list)",
                              "columns": COVERAGE_COLUMNS, "rows": coverage, "row_count": len(coverage),
@@ -599,6 +651,81 @@ class IndianReleaseTrackerService:
         return {"tracker_type": TRACKER_TYPE, "title": "Indian Regional Release Tracker",
                 "created_at": utc_now_iso(), "source_url": "https://en.wikipedia.org/wiki/List_of_Indian_films",
                 "summary": summary, "sections": sections}
+
+    # -- self-test (GET /indian-release-tracker/diagnostics) ---------------------------------
+    def diagnose(self) -> list[dict[str, str]]:
+        """Probe every source once FROM THIS SERVER, so a deployment shows what it can reach."""
+        today = date.today()
+        checks: list[dict[str, str]] = []
+
+        def probe(name: str, fn) -> None:
+            t0 = time.time()
+            try:
+                ok, detail = fn()
+            except Exception as exc:  # noqa: BLE001 - report, never raise
+                ok, detail = False, f"{exc.__class__.__name__}: {str(exc)[:160]}"
+            checks.append({"source": name, "status": "OK" if ok else ("SKIPPED" if ok is None else "BLOCKED / FAILED"),
+                           "seconds": f"{time.time() - t0:.1f}", "detail": detail})
+
+        def imdb():
+            r = self.http.session.post(IMDB_GRAPHQL, timeout=self.http.timeout_seconds,
+                                       headers={"content-type": "application/json"},
+                                       json={"query": IMDB_SEARCH_QUERY, "variables": {
+                                           "types": IMDB_MOVIE_TYPES + IMDB_TV_TYPES, "start": today.isoformat(),
+                                           "end": (today + timedelta(days=30)).isoformat(), "after": None, "first": 3}})
+            data = (r.json().get("data") or {}).get("advancedTitleSearch") if r.status_code == 200 else None
+            if not data:
+                return False, f"HTTP {r.status_code}, no advancedTitleSearch data"
+            first = [e["node"]["title"]["titleText"]["text"] for e in data.get("edges") or []]
+            return True, f"{data.get('total')} India titles in the next 30 days, e.g. {', '.join(first)}"
+
+        def tmdb():
+            if not (self.tmdb_api_key or self.tmdb_token):
+                return None, "TMDB_API_KEY / TMDB_READ_ACCESS_TOKEN not set"
+            found = self._tmdb("/find/tt0321968", {"external_source": "imdb_id"})
+            hit = (found.get("movie_results") or [{}])[0]
+            return bool(hit), f"tt0321968 -> {hit.get('title', 'no match')} ({hit.get('release_date', '')})"
+
+        def omdb():
+            if not self.omdb_api_key:
+                return None, "OMDB_API_KEY not set"
+            d = self._get_json(OMDB_API, {"i": "tt0321968", "apikey": self.omdb_api_key})
+            return d.get("Response") == "True", f"{d.get('Title') or d.get('Error')} – {d.get('Director', '')}"
+
+        def youtube_page():
+            vids = parse_youtube_results(self.http.get_text(YT_RESULTS + quote_plus("Deep Jele Jai Bengali trailer")))
+            if vids is None:
+                return False, "results page served without ytInitialData (consent/bot page)"
+            return bool(vids), f"{len(vids)} videos; first channel {vids[0]['ch'] if vids else '-'}"
+
+        def youtube_api():
+            if not self.youtube_api_key:
+                return None, "YOUTUBE_API_KEY not set (only used if the results page is blocked)"
+            res = self._youtube_api_search("Deep Jele Jai Bengali trailer", self.youtube_api_key)
+            return bool(res), f"{len(res)} videos; first channel {res[0]['ch'] if res else '-'}"
+
+        def wikipedia():
+            html = self._wiki_page_html(f"List of Hindi films of {today.year}")
+            rows = parse_film_year_page(html, "Hindi", today.year, today) if html else []
+            return bool(rows), f"List of Hindi films of {today.year}: {len(rows)} films parsed"
+
+        def wikidata():
+            d = self._get_json(WIKIDATA_SPARQL, {"format": "json", "query":
+                               'SELECT ?item WHERE { ?item wdt:P345 "tt0321968" }'},
+                               headers={"Accept": "application/sparql-results+json"})
+            b = d["results"]["bindings"]
+            return bool(b), f"tt0321968 -> {b[0]['item']['value'].rsplit('/', 1)[-1] if b else 'no item'}"
+
+        def cbfc():
+            form = self._cbfc_form()
+            return (form is not None), (f"Search Film form found: {form[1].upper()} {form[0]} (field '{form[3]}')"
+                                        if form else "no Search Film form served to this server")
+
+        for name, fn in (("IMDb Advanced Search (GraphQL)", imdb), ("TMDB API", tmdb), ("OMDb API", omdb),
+                         ("YouTube results page", youtube_page), ("YouTube Data API", youtube_api),
+                         ("Wikipedia API", wikipedia), ("Wikidata SPARQL", wikidata), ("CBFC website", cbfc)):
+            probe(name, fn)
+        return checks
 
     # -- sources -----------------------------------------------------------------------------
     def _wikipedia_films(self, languages, years, today, progress) -> list[Title]:
@@ -626,59 +753,201 @@ class IndianReleaseTrackerService:
                 out.extend(parse_tv_list_page(html, platform, today))
         return out
 
-    def _imdb_calendar(self, today, progress) -> list[Title]:
-        progress(5, "IMDb India release calendar")
-        try:
-            html = self.http.get_text(IMDB_CALENDAR)
-            m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.S)
-            groups = json.loads(m.group(1))["props"]["pageProps"]["groups"]
-        except Exception as exc:  # IMDb often refuses datacentre IPs
-            self.notes.append(f"IMDb calendar not reachable from the server ({exc.__class__.__name__}); "
-                              "Wikipedia lists cover upcoming films instead.")
-            return []
-        cal = []
-        for g in groups:
-            for e in g.get("entries", []):
+    def _imdb_advanced_search(self, start, end, include_tv, languages, today, progress) -> list[Title]:
+        """IMDb Advanced Title Search: India-origin titles released in the window (movies + TV)."""
+        kinds = [("Movie", IMDB_MOVIE_TYPES)] + ([("TV Show", IMDB_TV_TYPES)] if include_tv else [])
+        wanted = {l.lower() for l in languages}
+        out: list[Title] = []
+        for category, types in kinds:
+            after, pages, total = None, 0, 0
+            while pages < IMDB_SEARCH_MAX_PAGES:
+                progress(5 + pages, f"IMDb advanced search: {category}s {start:%d %b %Y} → {end:%d %b %Y}")
                 try:
-                    d = dateparser.parse(e["releaseDate"]).date()
-                except Exception:
-                    continue
-                cal.append({"id": e["id"], "t": e.get("titleText", ""), "d": d,
-                            "gen": " / ".join(e.get("genres") or []),
-                            "cast": ", ".join(c.get("text", "") for c in (e.get("principalCredits") or [])[:3])})
-        q = ('query($ids:[ID!]!){titles(ids:$ids){id countriesOfOrigin{countries{id}} '
-             'spokenLanguages{spokenLanguages{text}} '
-             'directors:credits(first:3,filter:{categories:["director"]}){edges{node{name{nameText{text}}}}} '
-             'companyCredits(first:2,filter:{categories:["production"]}){edges{node{company{companyText{text}}}}} '
-             'dist:companyCredits(first:15,filter:{categories:["distribution"]}){edges{node{company{companyText{text}}}}}}}')
-        info: dict[str, dict] = {}
-        for i in range(0, len(cal), 50):
+                    r = self.http.session.post(
+                        IMDB_GRAPHQL, timeout=self.http.timeout_seconds,
+                        headers={"content-type": "application/json"},
+                        json={"query": IMDB_SEARCH_QUERY, "variables": {
+                            "types": types, "start": start.isoformat(), "end": end.isoformat(),
+                            "after": after, "first": IMDB_SEARCH_PAGE}})
+                    data = (r.json().get("data") or {}).get("advancedTitleSearch")
+                except Exception as exc:
+                    self.notes.append(f"IMDb advanced search not reachable from the server ({exc.__class__.__name__}); "
+                                      "Wikipedia and TMDB cover these titles instead.")
+                    return out
+                if not data:
+                    self.notes.append("IMDb advanced search returned no data (IMDb may be blocking the server).")
+                    return out
+                total = data.get("total") or 0
+                for edge in data.get("edges") or []:
+                    t = self._imdb_title(edge["node"]["title"], category, wanted, today)
+                    if t:
+                        out.append(t)
+                pages += 1
+                info = data.get("pageInfo") or {}
+                if not info.get("hasNextPage"):
+                    break
+                after = info.get("endCursor")
+            if pages >= IMDB_SEARCH_MAX_PAGES:
+                self.notes.append(f"IMDb advanced search for {category}s stopped at {pages * IMDB_SEARCH_PAGE} of {total} titles.")
+        return out
+
+    @staticmethod
+    def _imdb_title(t: dict, category: str, wanted: set[str], today: date) -> Title | None:
+        names = lambda key, path: [e["node"][path[0]][path[1]]["text"]  # noqa: E731
+                                   for e in ((t.get(key) or {}).get("edges") or [])]
+        langs = [x["text"] for x in ((t.get("spokenLanguages") or {}).get("spokenLanguages") or [])]
+        indian = [l for l in langs if l.lower() in INDIAN_LOWER]
+        if indian and wanted and not any(l.lower() in wanted for l in indian):
+            return None                                   # a language the user unticked
+        rd = t.get("releaseDate") or {}
+        d = None
+        if rd.get("year"):
             try:
-                r = self.http.session.post(IMDB_GRAPHQL, json={"query": q, "variables": {"ids": [c["id"] for c in cal[i:i + 50]]}},
-                                           headers={"content-type": "application/json"}, timeout=self.http.timeout_seconds)
-                for t in (r.json().get("data") or {}).get("titles") or []:
-                    info[t["id"]] = t
+                d = date(rd["year"], rd.get("month") or 1, rd.get("day") or 1)
+            except ValueError:
+                d = None
+        release = (d.strftime("%d %b %Y") if rd.get("day") else d.strftime("%b %Y")) if d else "TBA (announced)"
+        dist = [n for n in names("dist", ("company", "companyText")) if NETWORK_RE.search(n)]
+        prod = ", ".join(names("prod", ("company", "companyText")))
+        type_id = (t.get("titleType") or {}).get("id", "")
+        runtime = ((t.get("runtime") or {}).get("seconds") or 0) // 60
+        net = ", ".join(dict.fromkeys(dist[:3]))
+        if category == "Movie":
+            platform = "TV Movie" if type_id == "tvMovie" else "Film – Theatrical"
+        else:
+            platform = f"{'Mini-series' if type_id == 'tvMiniSeries' else 'TV series'} – " + (f"OTT ({dist[0]})" if dist else "TV / OTT")
+        countries = [x["id"] for x in ((t.get("countriesOfOrigin") or {}).get("countries") or [])]
+        return Title(
+            title=(t.get("titleText") or {}).get("text", ""), imdb_id=t["id"], category=category,
+            genre=" / ".join(g["text"] for g in ((t.get("genres") or {}).get("genres") or [])),
+            language=(langs[0] + (f" (+ {', '.join(langs[1:])})" if langs[1:] else "")) if langs else "Unspecified",
+            director=", ".join(names("directors", ("name", "nameText"))),
+            cast=", ".join(names("cast", ("name", "nameText"))),
+            produced_by=", ".join(names("producers", ("name", "nameText"))) or prod, studio=prod, network=net,
+            release_date=release, sort_date=d.isoformat() if d else None,
+            status=status_for(d.isoformat() if d else None, today, "Tentative"),
+            duration=f"{runtime} min" if runtime else "",
+            certificate_type=((t.get("certificate") or {}).get("rating") or ""),
+            type_platform=platform,
+            origin="Indian" if ("IN" in countries and (indian or not langs)) else "International",
+            source="IMDb Advanced Search (country of origin: India)")
+
+    # -- TMDB / OMDb (the hub's API keys) ----------------------------------------------------
+    def _tmdb(self, path: str, params: dict | None = None) -> dict:
+        params = dict(params or {})
+        headers = {"Accept": "application/json"}
+        if self.tmdb_token:
+            headers["Authorization"] = f"Bearer {self.tmdb_token}"
+        elif self.tmdb_api_key:
+            params["api_key"] = self.tmdb_api_key
+        return self._get_json(TMDB_API + path, params, headers)
+
+    def _tmdb_enrich(self, titles: list[Title], today: date, progress) -> None:
+        if not (self.tmdb_api_key or self.tmdb_token):
+            self.notes.append("TMDB key not configured – skipped TMDB enrichment.")
+            return
+        needs = [t for t in titles if not (t.imdb_id and t.genre and t.director and t.studio and t.network)]
+        needs.sort(key=lambda t: (not t.from_list, t.sort_date is None, -(int(t.sort_date.replace("-", "")) if t.sort_date else 0)))
+        targets = needs[:TMDB_MAX_TITLES]
+        if len(needs) > TMDB_MAX_TITLES:
+            self.notes.append(f"TMDB enrichment capped at {TMDB_MAX_TITLES} of {len(needs)} titles (listed, upcoming and recent first).")
+        if not targets:
+            return
+        state = {"done": 0, "hit": 0}
+
+        def one(t: Title) -> None:
+            try:
+                kind, tid = self._tmdb_locate(t)
+                if tid:
+                    self._apply_tmdb(t, kind, tid)
+                    state["hit"] += 1
+            except Exception:
+                pass
+            state["done"] += 1
+            if state["done"] % 25 == 0:
+                progress(56 + int(4 * state["done"] / len(targets)), f"TMDB: {state['done']}/{len(targets)} titles")
+
+        progress(56, f"TMDB: enriching {len(targets)} titles")
+        with ThreadPoolExecutor(max_workers=TMDB_WORKERS) as pool:
+            list(pool.map(one, targets))
+        self.notes.append(f"TMDB matched {state['hit']} of {len(targets)} titles that had gaps.")
+
+    def _tmdb_locate(self, t: Title) -> tuple[str, int | None]:
+        want = "tv" if t.category != "Movie" else "movie"
+        if t.imdb_id:
+            found = self._tmdb(f"/find/{t.imdb_id}", {"external_source": "imdb_id"})
+            for kind, key in (("movie", "movie_results"), ("tv", "tv_results")):
+                if found.get(key):
+                    return kind, found[key][0]["id"]
+            return want, None
+        lang = LANG_CODES.get(t.language.split(" (")[0].split()[0] if t.language else "", "")
+        params = {"query": re.sub(r"\s*\(.*?\)\s*", " ", t.title).strip()}
+        if t.sort_date:
+            params["year" if want == "movie" else "first_air_date_year"] = t.sort_date[:4]
+        results = self._tmdb(f"/search/{want}", params).get("results") or []
+        key = norm(params["query"])
+        for r in results[:8]:
+            names = [r.get("title") or r.get("name") or "", r.get("original_title") or r.get("original_name") or ""]
+            if any(norm(n) == key for n in names) and (not lang or r.get("original_language") == lang):
+                return want, r["id"]
+        return want, None
+
+    def _apply_tmdb(self, t: Title, kind: str, tid: int) -> None:
+        d = self._tmdb(f"/{kind}/{tid}", {"append_to_response": "credits,external_ids,watch/providers"})
+        ext = d.get("external_ids") or {}
+        if not t.imdb_id and (ext.get("imdb_id") or d.get("imdb_id") or "").startswith("tt"):
+            t.imdb_id = ext.get("imdb_id") or d.get("imdb_id")
+        if not t.genre:
+            t.genre = " / ".join(g["name"] for g in d.get("genres") or [])
+        credits = d.get("credits") or {}
+        if not t.director:
+            crew = credits.get("crew") or []
+            t.director = ", ".join(dict.fromkeys(c["name"] for c in crew if c.get("job") in ("Director", "Series Director")))[:120] \
+                or ", ".join(c.get("name", "") for c in (d.get("created_by") or []))
+        if not t.cast:
+            t.cast = ", ".join(c["name"] for c in (credits.get("cast") or [])[:3])
+        if not t.studio:
+            t.studio = ", ".join(c["name"] for c in (d.get("production_companies") or [])[:3])
+        if not t.network:
+            nets = [n["name"] for n in d.get("networks") or []]
+            providers = ((d.get("watch/providers") or {}).get("results") or {}).get("IN") or {}
+            flat = [p["provider_name"] for p in providers.get("flatrate") or []]
+            t.network = ", ".join(dict.fromkeys((nets or flat)[:3]))
+        if t.language in ("", "Unspecified") and d.get("original_language") in CODE_LANGS:
+            t.language = CODE_LANGS[d["original_language"]]
+        if not t.sort_date:
+            raw = d.get("release_date") or d.get("first_air_date") or ""
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+                dd = date.fromisoformat(raw)
+                t.sort_date, t.release_date = raw, dd.strftime("%d %b %Y")
+        t.source += "; TMDB"
+
+    def _omdb_enrich(self, titles: list[Title], progress) -> None:
+        if not self.omdb_api_key:
+            return
+        targets = [t for t in titles if t.imdb_id and not (t.genre and t.director and t.cast)][:OMDB_MAX_TITLES]
+        if not targets:
+            return
+        progress(59, f"OMDb: filling gaps for {len(targets)} titles")
+        filled = 0
+        for t in targets:
+            try:
+                d = self._get_json(OMDB_API, {"i": t.imdb_id, "apikey": self.omdb_api_key})
             except Exception:
                 continue
-        out = []
-        for c in cal:
-            t = info.get(c["id"], {})
-            countries = [x["id"] for x in ((t.get("countriesOfOrigin") or {}).get("countries") or [])]
-            if countries and "IN" not in countries:
+            if d.get("Response") != "True":
                 continue
-            langs = [x["text"] for x in ((t.get("spokenLanguages") or {}).get("spokenLanguages") or [])]
-            names = lambda key, path: [e["node"][path[0]][path[1]]["text"] for e in ((t.get(key) or {}).get("edges") or [])]  # noqa: E731
-            prod = ", ".join(names("companyCredits", ("company", "companyText")))
-            dist = [n for n in names("dist", ("company", "companyText")) if NETWORK_RE.search(n)]
-            title = re.sub(rf"\s+{c['d'].year}$", "", c["t"])
-            out.append(Title(
-                title=title, imdb_id=c["id"], genre=c["gen"], cast=c["cast"],
-                language=(langs[0] + (f" (+ {', '.join(langs[1:])})" if langs[1:] else "")) if langs else "Unspecified",
-                director=", ".join(names("directors", ("name", "nameText"))), produced_by=prod, studio=prod,
-                network=", ".join(dict.fromkeys(dist[:3])), release_date=c["d"].strftime("%d %b %Y"),
-                sort_date=c["d"].isoformat(), status=status_for(c["d"].isoformat(), today, "Tentative"),
-                source=f"IMDb Calendar (India), {today:%d %b %Y}"))
-        return out
+            ok = lambda v: v and v != "N/A"  # noqa: E731
+            if not t.genre and ok(d.get("Genre")):
+                t.genre = d["Genre"].replace(", ", " / ")
+            if not t.director and ok(d.get("Director")):
+                t.director = d["Director"]
+            if not t.cast and ok(d.get("Actors")):
+                t.cast = d["Actors"]
+            filled += 1
+            t.source += "; OMDb"
+        if filled:
+            self.notes.append(f"OMDb filled gaps for {filled} titles.")
 
     def _resolve_list(self, listed, today, progress) -> tuple[list[Title], list[dict[str, str]]]:
         progress(45, f"Resolving {len(listed)} listed titles on Wikidata")
