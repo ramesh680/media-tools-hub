@@ -12,11 +12,12 @@
     <p class="eyebrow">Sources, read live on every run</p>
     <ul>
       <li><strong>Wikipedia:</strong> "List of &lt;Language&gt; films of &lt;Year&gt;" + OTT originals lists</li>
-      <li><strong>IMDb:</strong> India release calendar (best effort)</li>
+      <li><strong>IMDb Advanced Search:</strong> every India-origin movie, TV movie, series and mini-series released in the window, with director, cast, producers, Studio and streaming Network</li>
+      <li><strong>TMDB + OMDb</strong> (the hub's API keys): missing IMDb IDs, genres, directors, cast, studios, TV networks and India streaming providers</li>
       <li><strong>Wikidata:</strong> IMDb IDs, Studio, Network for uploaded titles</li>
       <li><strong>YouTube:</strong> trailer link + Top 3 channels (trailer · full movie · songs)</li>
       <li><strong>CBFC:</strong> official website certificates (best effort &mdash; the site blocks many servers)</li>
-      <li><strong>Exports:</strong> CSV, Excel, Google Sheets</li>
+      <li><strong>Exports:</strong> CSV, Excel, Google Sheets &mdash; and a BDR ingest template for the Movies table and for the TV Shows table</li>
     </ul>
   </aside>
 </section>
@@ -27,7 +28,7 @@
       <p class="eyebrow">Run options</p>
       <h2>What should this run cover?</h2>
     </div>
-    <p>Today: {{ today_iso }}. {% if youtube_api_enabled %}YouTube API fallback key is configured.{% else %}Optional: paste a YouTube API key for the fallback.{% endif %}</p>
+    <p><a href="/indian-release-tracker/diagnostics" target="_blank" rel="noopener">Source self-test</a> · Today: {{ today_iso }}. {% if youtube_api_enabled %}YouTube API fallback key is configured.{% else %}Optional: paste a YouTube API key for the fallback.{% endif %}</p>
   </div>
 
   <form class="validator-form" hx-post="/indian-release-tracker/start" hx-target="#workspace" hx-swap="outerHTML" enctype="multipart/form-data">
@@ -125,7 +126,7 @@
 
 <section id="workspace" class="workspace workspace-empty">
   <h2>Ready to build the tracker</h2>
-  <p>Results show every title with its release status, Studio, Network, trailer and Top 3 YouTube channels, plus a Source Coverage table when you upload a list. Download as CSV, Excel or Google Sheets.</p>
+  <p>Results come as two tables &mdash; Movies and TV Shows &mdash; with release status, Studio, Network, trailer and Top 3 YouTube channels, plus a Source Coverage table when you upload a list. Each table downloads as CSV, Excel, Google Sheets or a BDR ingest template.</p>
 </section>
 
 {% include "partials/history_table.html" %}
