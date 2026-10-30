@@ -33,6 +33,28 @@ bulk verifier) still need the multi-GB local dataset and run in the full local
 install (`IMDB_ENABLED=true`). To run those on Render you'd need a paid plan with
 a persistent disk; the TMDB path above avoids that for the season/episode tool.
 
+## Indian Regional Release Tracker (`/indian-release-tracker`)
+
+Web version of the `indian-regional-release-tracker` skill. Movies and TV shows across 13 Indian
+languages with IMDb ID, release date/status, genre, language, producer, **Studio**, **Network**,
+director, cast, trailer link, **Top 3 YouTube Channels** (`<channel URL>|<Title>` - one channel each
+for the trailer, the full movie and the songs), CBFC certificate fields, origin and Pay 1/Library window.
+
+Run modes: **1** 2024 -> today + 1 year (with Date TBA titles), **2** next 3 months, **3** next 6 months
+(both from the 1st of the current month), **4** only an uploaded/pasted title list (any year/country,
+plus a Source Coverage table), **5** custom dates + languages + notes. Titles from an uploaded list are
+always kept, whatever their date.
+
+Sources read live on every run: Wikipedia year lists and OTT-originals lists (MediaWiki API), the IMDb
+India calendar (best effort - IMDb can refuse datacentre IPs; the run notes it and continues), Wikidata
+(IMDb IDs, Studio, Network for listed titles), YouTube's results page (falls back to the YouTube Data API
+when `YOUTUBE_API_KEY` or a pasted key is available; capped at 25 titles per run for quota), and CBFC's
+official website (best effort - the site blocks many servers; the run says so when it does).
+
+Free-tier limits: YouTube look-ups are capped at 600 titles per run (default scope: listed titles +
+the last 90 days + upcoming); CBFC checks at 150 recent/upcoming films. Tests:
+`python -m unittest test_indian_release_tracker -v` (offline fixtures, no network).
+
 ## Deploy to Render (free)
 
 1. Push this folder to a new GitHub repository.
