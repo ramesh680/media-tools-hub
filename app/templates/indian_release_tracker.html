@@ -1,130 +1,135 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="hero-grid">
-  <article class="hero-card">
-    <p class="eyebrow">India · Regional Languages</p>
-    <h1>Indian Regional Release Tracker</h1>
-    <p>Movies and TV shows in Hindi, Tamil, Telugu, Malayalam, Kannada, Marathi, Bengali, Gujarati, Punjabi, Odia, Bhojpuri, Assamese and Tulu &mdash; released, CBFC-certified and upcoming &mdash; with IMDb ID, release status, Studio, Network, director, cast, trailer and the Top 3 YouTube channels (<code>channel URL|Title</code>). Or enrich only your own title list.</p>
-  </article>
-
-  <aside class="tracking-card" aria-label="Sources">
-    <p class="eyebrow">Sources, read live on every run</p>
-    <ul>
-      <li><strong>Wikipedia:</strong> "List of &lt;Language&gt; films of &lt;Year&gt;" + OTT originals lists</li>
-      <li><strong>IMDb Advanced Search:</strong> every India-origin movie, TV movie, series and mini-series released in the window, with director, cast, producers, Studio and streaming Network</li>
-      <li><strong>TMDB + OMDb</strong> (the hub's API keys): missing IMDb IDs, genres, directors, cast, studios, TV networks and India streaming providers</li>
-      <li><strong>Wikidata:</strong> IMDb IDs, Studio, Network for uploaded titles</li>
-      <li><strong>YouTube:</strong> trailer link + Top 3 channels (trailer · full movie · songs)</li>
-      <li><strong>CBFC:</strong> official website certificates (best effort &mdash; the site blocks many servers)</li>
-      <li><strong>Exports:</strong> CSV, Excel, Google Sheets &mdash; and a BDR ingest template for the Movies table and for the TV Shows table</li>
-    </ul>
-  </aside>
+<section class="irt" style="margin-bottom:14px">
+  <p class="eyebrow" style="margin:0">India · Regional Languages</p>
+  <h1 style="font-size:1.6rem; margin:4px 0 6px">Indian Regional Release Tracker</h1>
+  <p style="margin:0; color:var(--muted); font-size:0.9rem; max-width:860px">Movies and TV shows across 13 Indian languages – release date and status, language, producers, studio, network, cast, official trailer and Top 3 YouTube channels – checked against IMDb or TMDB. Download as CSV, Excel, Google Sheets or a BDR ingest template.</p>
 </section>
 
-<section class="app-panel" aria-label="Indian release tracker panel">
-  <div class="panel-heading">
-    <div>
-      <p class="eyebrow">Run options</p>
-      <h2>What should this run cover?</h2>
-    </div>
-    <p><a href="/indian-release-tracker/diagnostics" target="_blank" rel="noopener">Source self-test</a> · Today: {{ today_iso }}. {% if youtube_api_enabled %}YouTube API fallback key is configured.{% else %}Optional: paste a YouTube API key for the fallback.{% endif %}</p>
-  </div>
+<style>
+  /* Indian Release Tracker – compact controls (scoped to this page) */
+  .irt { font-size: 0.9rem; }
+  .irt-block { margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-soft); }
+  .irt-block > legend { padding: 0 4px; color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .irt-modes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .irt-mode { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--line-strong);
+              border-radius: 999px; font-size: 0.84rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .irt-mode input { width: 13px; height: 13px; margin: 0; accent-color: var(--accent); }
+  .irt-mode:has(input:checked) { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .irt-hint { margin: 8px 0 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
+  .irt-langs { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 4px 12px; }
+  .irt-check { display: inline-flex; align-items: center; gap: 7px; font-size: 0.88rem; font-weight: 500; color: var(--ink);
+               text-transform: none; letter-spacing: 0; cursor: pointer; }
+  .irt-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+  .irt-links { font-size: 0.78rem; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .irt-links a { color: var(--blue); cursor: pointer; }
+  .irt-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+  .irt-row label > span, .irt-field > span { font-size: 0.72rem; }
+  .irt input[type=date], .irt input[type=password], .irt select, .irt input[type=file], .irt textarea { font-size: 0.88rem; padding: 7px 10px; }
+  .irt textarea { min-height: 70px; }
+  .irt details > summary, details.irt > summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; font-weight: 600; }
+  .irt details[open] > summary { margin-bottom: 10px; }
+  .irt [hidden] { display: none !important; }
+  .irt input[type=radio], .irt input[type=checkbox] { padding: 0; min-height: 0; border: 0; border-radius: 3px; flex: 0 0 auto; }
+  .irt .primary-button { font-size: 0.92rem; padding: 9px 22px; width: auto; justify-self: start; }
+  .irt .validator-form { gap: 12px; }
+  #workspace.workspace-empty h2 { font-size: 1.05rem; }
+  #workspace.workspace-empty p { font-size: 0.86rem; font-weight: 500; }
+</style>
 
+<section class="app-panel irt" aria-label="Indian release tracker panel">
   <form class="validator-form" hx-post="/indian-release-tracker/start" hx-target="#workspace" hx-swap="outerHTML" enctype="multipart/form-data">
-    <fieldset class="date-controls">
-      <legend>Run mode</legend>
-      <div class="range-options" role="radiogroup" aria-label="Run mode">
-        <label class="range-option">
-          <input type="radio" name="mode" value="1">
-          <span>1 · 2024 → one year ahead</span>
-        </label>
-        <label class="range-option">
-          <input type="radio" name="mode" value="2" checked>
-          <span>2 · Next 3 months</span>
-        </label>
-        <label class="range-option">
-          <input type="radio" name="mode" value="3">
-          <span>3 · Next 6 months</span>
-        </label>
-        <label class="range-option">
-          <input type="radio" name="mode" value="4">
-          <span>4 · Only my title list</span>
-        </label>
-        <label class="range-option">
-          <input type="radio" name="mode" value="5">
-          <span>5 · Custom</span>
-        </label>
+    <fieldset class="irt-block">
+      <legend>What should this run cover?</legend>
+      <div class="irt-modes" role="radiogroup" aria-label="Run mode">
+        <label class="irt-mode"><input type="radio" name="mode" value="1"> 2024 → one year ahead</label>
+        <label class="irt-mode"><input type="radio" name="mode" value="2" checked> Next 3 months</label>
+        <label class="irt-mode"><input type="radio" name="mode" value="3"> Next 6 months</label>
+        <label class="irt-mode"><input type="radio" name="mode" value="4"> Only my title list</label>
+        <label class="irt-mode"><input type="radio" name="mode" value="5"> Custom</label>
       </div>
-      <p class="validator-form-note">
-        1 = 01 Jan 2024 → {{ next_year_iso }} (plus announced "Date TBA" titles) · 2 / 3 = from the 1st of this month to today + 3 / 6 months ·
-        4 = only the titles you upload or paste (any year, any country), in the same columns · 5 = the custom dates, languages and notes below.
-        Option 1 reads ~50 Wikipedia pages and is the slowest run.
-      </p>
-      <div class="custom-date-row">
-        <label><span>Custom start (option 5)</span><input type="date" name="custom_start" value="{{ today_iso }}"></label>
-        <label><span>Custom end (option 5)</span><input type="date" name="custom_end" value="{{ next_year_iso }}"></label>
+      <p class="irt-hint" id="irt-mode-hint"></p>
+
+      <div class="irt-row" data-show="5" hidden style="margin-top:10px">
+        <label><span>From</span><input type="date" name="custom_start" value="{{ today_iso }}"></label>
+        <label><span>To</span><input type="date" name="custom_end" value="{{ next_year_iso }}"></label>
+      </div>
+
+      <div data-show="4" hidden style="margin-top:10px; display:grid; gap:8px">
+        <label class="irt-field"><span>Title list (.csv / .xlsx)</span>
+          <input type="file" name="bulk_file" accept=".csv,.xlsx,.xlsm"></label>
+        <details>
+          <summary>Or paste titles instead</summary>
+          <textarea name="bulk_text" spellcheck="false" placeholder="Title | Language | Release date or year | IMDb ID&#10;Deep Jele Jai | Bengali | 1959 | tt0321968"></textarea>
+        </details>
       </div>
     </fieldset>
 
-    <fieldset class="date-controls">
-      <legend>Languages (options 1, 2, 3, 5)</legend>
-      <div class="range-options" aria-label="Languages">
+    <fieldset class="irt-block" data-hide="4">
+      <legend>Languages <span class="irt-links"><a data-langs="all">all</a> · <a data-langs="none">none</a></span></legend>
+      <div class="irt-langs">
         {% for lang in languages %}
-        <label class="range-option">
-          <input type="checkbox" name="languages" value="{{ lang }}" checked>
-          <span>{{ lang }}</span>
-        </label>
+        <label class="irt-check"><input type="checkbox" name="languages" value="{{ lang }}" checked> {{ lang }}</label>
         {% endfor %}
       </div>
     </fieldset>
 
-    <div class="validator-source-grid">
-      <label class="field-control">
-        <span>Title list for option 4 (.csv, .xlsx) &mdash; optional for 1/2/3/5 (its titles are always kept)</span>
-        <input type="file" name="bulk_file" accept=".csv,.xlsx,.xlsm">
-      </label>
-      <div class="field-control">
-        <span>Accepted columns / pasted format</span>
-        <p class="validator-form-note">Columns such as IMDb ID, Title, Content Type, Language, Release Date, Pay1/Library (e.g. a Prime Video catalogue export). Pasted lines: Title | Language | Release date or year | IMDb ID.</p>
+    <div class="irt-modes" style="gap:16px">
+      <label class="irt-check"><input type="checkbox" name="include_tv" checked> Include TV shows</label>
+      <label class="irt-check"><input type="checkbox" name="check_cbfc" checked> Check CBFC certificates</label>
+    </div>
+
+    <details>
+      <summary>Advanced options</summary>
+      <div class="irt-row">
+        <label><span>Top 3 YouTube channels for</span>
+          <select name="youtube_scope">
+            <option value="recent" selected>Listed + last 90 days + upcoming</option>
+            <option value="all">Every title (slow, max 600)</option>
+            <option value="none">Skip YouTube</option>
+          </select></label>
+        <label><span>YouTube API key (optional{% if youtube_api_enabled %}; configured key used if blank{% endif %})</span>
+          <input type="password" name="youtube_api_key" autocomplete="off" placeholder="Only used if YouTube blocks the server"></label>
       </div>
-    </div>
+      <details data-show="5" hidden style="margin-top:10px">
+        <summary>Comments (added to the run summary)</summary>
+        <textarea name="notes" spellcheck="false" placeholder="e.g. Telugu and Tamil only, Movies only"></textarea>
+      </details>
+      <p class="irt-hint">Today: {{ today_iso }} · <a href="/indian-release-tracker/diagnostics" target="_blank" rel="noopener">Source self-test</a></p>
+    </details>
 
-    <label class="field-control rules-control">
-      <span>Paste titles (option 4)</span>
-      <textarea name="bulk_text" spellcheck="false" placeholder="Deep Jele Jai | Bengali | 1959 | tt0321968&#10;Kantara: Chapter 1 | Kannada | 2025"></textarea>
-    </label>
-
-    <div class="validator-source-grid">
-      <label class="field-control">
-        <span>Top 3 YouTube channels for</span>
-        <select name="youtube_scope">
-          <option value="recent" selected>Listed titles + last 90 days + upcoming (recommended)</option>
-          <option value="all">Every title (slow; capped at 600)</option>
-          <option value="none">Skip YouTube</option>
-        </select>
-      </label>
-      <label class="field-control">
-        <span>YouTube API key (optional fallback{% if youtube_api_enabled %}, configured key used if blank{% endif %})</span>
-        <input type="password" name="youtube_api_key" autocomplete="off" placeholder="Only used if YouTube blocks the results page">
-      </label>
-    </div>
-
-    <div class="range-options">
-      <label class="range-option"><input type="checkbox" name="include_tv" checked><span>Include TV shows (OTT originals)</span></label>
-      <label class="range-option"><input type="checkbox" name="check_cbfc" checked><span>Check CBFC website certificates</span></label>
-    </div>
-
-    <label class="field-control rules-control">
-      <span>Comments / custom requirements (option 5)</span>
-      <textarea name="notes" spellcheck="false" placeholder="e.g. Telugu and Tamil only, Movies only, Jan–Mar 2027"></textarea>
-    </label>
-
-    <button class="primary-button validator-submit-button" type="submit">Build Indian Release Tracker</button>
+    <button class="primary-button validator-submit-button" type="submit">Build tracker</button>
   </form>
 </section>
 
-<section class="app-panel" aria-label="Source coverage">
+<script>
+(() => {
+  const form = document.currentScript.previousElementSibling.querySelector("form");
+  const hints = {
+    "1": "01 Jan 2024 → {{ next_year_iso }}, plus announced titles without a date. Slowest run.",
+    "2": "From the 1st of this month to 3 months ahead.",
+    "3": "From the 1st of this month to 6 months ahead.",
+    "4": "Only the titles you upload, any year or country, in the same columns.",
+    "5": "Your own date range and languages."
+  };
+  const apply = () => {
+    const mode = (form.querySelector("input[name=mode]:checked") || {}).value || "2";
+    form.querySelectorAll("[data-show]").forEach(el => { el.hidden = el.dataset.show !== mode; });
+    form.querySelectorAll("[data-hide]").forEach(el => { el.hidden = el.dataset.hide === mode; });
+    form.querySelector("#irt-mode-hint").textContent = hints[mode] || "";
+  };
+  form.querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", apply));
+  form.querySelectorAll("[data-langs]").forEach(a => a.addEventListener("click", e => {
+    e.preventDefault();
+    form.querySelectorAll("input[name=languages]").forEach(c => { c.checked = a.dataset.langs === "all"; });
+  }));
+  apply();
+})();
+</script>
+
+<details class="app-panel irt" aria-label="Source coverage">
+  <summary>Sources used (click to show)</summary>
   <div class="panel-heading">
     <div>
       <p class="eyebrow">Source coverage</p>
@@ -149,11 +154,11 @@
       </tbody>
     </table>
   </div>
-</section>
+</details>
 
 <section id="workspace" class="workspace workspace-empty">
   <h2>Ready to build the tracker</h2>
-  <p>Results come as two tables &mdash; Movies and TV Shows &mdash; with release status, Studio, Network, trailer and Top 3 YouTube channels, plus a Source Coverage table when you upload a list. Each table downloads as CSV, Excel, Google Sheets or a BDR ingest template.</p>
+  <p>Results come as two tables (Movies, TV Shows), each downloadable as CSV, Excel, Google Sheets or a BDR ingest template.</p>
 </section>
 
 {% include "partials/history_table.html" %}
