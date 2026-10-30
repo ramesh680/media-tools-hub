@@ -50,7 +50,9 @@ billboard_service = BillboardArtist100Service(http_client, imdb_service)
 youtube_release_verifier_service = YouTubeReleaseVerifierService(http_client, settings.youtube_api_key)
 # Web version of the indian-regional-release-tracker skill (Wikipedia, IMDb calendar, Wikidata,
 # YouTube top-3 channels, CBFC website). See app/services/indian_release_tracker.py.
-indian_release_tracker_service = IndianReleaseTrackerService(http_client, settings.youtube_api_key)
+indian_release_tracker_service = IndianReleaseTrackerService(
+    http_client, settings.youtube_api_key, settings.tmdb_api_key,
+    settings.tmdb_read_access_token, settings.omdb_api_key)
 # Straight scrape of the newest MovieInsider trailer listing pages (first two by
 # default) exported as Excel/CSV. No YouTube API, no channel validation.
 movie_trailer_feed_service = MovieTrailerFeedService(http_client)
@@ -159,6 +161,17 @@ def indian_release_tracker(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/indian-release-tracker/diagnostics")
+def indian_release_tracker_diagnostics() -> dict:
+    """Self-test: which sources can THIS deployment reach (IMDb, TMDB, OMDb, YouTube, ...)."""
+    svc = IndianReleaseTrackerService(
+        http_client, settings.youtube_api_key, settings.tmdb_api_key,
+        settings.tmdb_read_access_token, settings.omdb_api_key)
+    checks = svc.diagnose()
+    return {"checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "ok": sum(c["status"] == "OK" for c in checks), "total": len(checks), "checks": checks}
+
+
 @app.post("/indian-release-tracker/start", response_class=HTMLResponse)
 async def start_indian_release_tracker(request: Request, bulk_file: UploadFile | None = File(None)) -> HTMLResponse:
     form = await request.form()
@@ -172,7 +185,9 @@ async def start_indian_release_tracker(request: Request, bulk_file: UploadFile |
                                "Option 4 works only on your titles: upload a CSV/Excel list or paste titles, then run again.")
     job = job_manager.start(
         "indian_release_tracker",
-        lambda progress: IndianReleaseTrackerService(http_client, settings.youtube_api_key).run(
+        lambda progress: IndianReleaseTrackerService(
+            http_client, settings.youtube_api_key, settings.tmdb_api_key,
+            settings.tmdb_read_access_token, settings.omdb_api_key).run(
             mode=mode,
             custom_start=str(form.get("custom_start") or ""),
             custom_end=str(form.get("custom_end") or ""),
