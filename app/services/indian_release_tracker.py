@@ -3,7 +3,7 @@
 Builds one table of Indian movies and TV shows across regional languages for a chosen window,
 or enriches only an uploaded title list, with the same columns as the skill's workbook:
 IMDb ID, release date/status, genre, language, producer, Studio, Network, director, cast,
-trailer link, Top 3 YouTube channels (``<channel URL>|<Title>``), CBFC certificate fields,
+trailer link, Top YouTube channels (``<channel URL>|<Title>``: credited trailer channels + official studio channels), CBFC certificate fields,
 origin, Pay 1/Library window and source.
 
 Run modes (same as the skill's menu):
@@ -33,7 +33,7 @@ Server-side sources (all public, no login):
   * Listing pages (best effort, generic table / "date -> title -> language" card parser): Sacnilk
     upcoming, BoxOfficeIndia24 OTT upcoming, OTTDrop, OTTweek, OTT Movie Releases, Binged, Filmibeat,
     91mobiles, District, What's on Netflix (India 2026), About Amazon India (Prime Video upcoming)
-  * YouTube search results page (no key) for the trailer + Top 3 channels; YouTube Data API v3
+  * YouTube search results page (no key) for the trailer + Top YouTube channels; YouTube Data API v3
     (YOUTUBE_API_KEY or the per-run key) as a fallback when the results page is blocked
   * CBFC official website "Search Film" - best effort, read live on every run (no PDFs)
 
@@ -60,16 +60,45 @@ from app.models import utc_now_iso
 
 ProgressCallback = Callable[[int, str], None]
 
+# Render sets RENDER_GIT_COMMIT on every deploy: shown in the run summary and self-test so it is
+# obvious which version of this file is live.
+import os
+BUILD_ID = (os.getenv("RENDER_GIT_COMMIT") or "local")[:7]
+
 TRACKER_TYPE = "indian_release_tracker"
 
-INDIAN_LANGUAGES = ["Hindi", "Tamil", "Telugu", "Malayalam", "Kannada", "Marathi", "Bengali",
-                    "Gujarati", "Punjabi", "Odia", "Bhojpuri", "Assamese", "Tulu"]
-INDIAN_LOWER = {x.lower() for x in INDIAN_LANGUAGES} | {"urdu", "konkani", "haryanvi", "rajasthani", "sanskrit"}
+# Every Indian state / UT language with a film or TV industry, incl. regional languages and dialects.
+# (state / region in the comment; IMDb and TMDB use these names)
+INDIAN_LANGUAGES = [
+    "Hindi", "Tamil", "Telugu", "Malayalam", "Kannada", "Marathi", "Bengali", "Gujarati", "Punjabi", "Odia",
+    "Assamese", "Bhojpuri",                    # Bihar, Jharkhand, eastern UP
+    "Tulu",                                    # coastal Karnataka
+    "Urdu", "Konkani",                         # Goa / coastal Karnataka & Maharashtra
+    "Rajasthani", "Marwari",                   # Rajasthan
+    "Haryanvi",                                # Haryana
+    "Garhwali", "Kumaoni",                     # Uttarakhand (Uttarakhandi)
+    "Pahari",                                  # Himachal Pradesh
+    "Kashmiri", "Dogri", "Ladakhi",            # Jammu & Kashmir, Ladakh
+    "Chhattisgarhi",                           # Chhattisgarh
+    "Maithili", "Magahi", "Angika",            # Bihar
+    "Awadhi", "Braj",                          # Uttar Pradesh
+    "Bundeli", "Malvi",                        # Madhya Pradesh
+    "Santali", "Nagpuri", "Kurukh",            # Jharkhand
+    "Sambalpuri",                              # western Odisha
+    "Manipuri", "Mizo", "Khasi", "Garo", "Kokborok", "Bodo", "Nagamese",   # North-East
+    "Nepali", "Lepcha",                        # Sikkim, Darjeeling
+    "Sindhi", "Sanskrit", "Saurashtra", "Badaga", "Kodava", "Beary", "Banjara", "Lambadi",
+]
+# Names IMDb / TMDB / users write differently -> one of the names above
+LANGUAGE_ALIASES = {"uttarakhandi": "Garhwali", "meitei": "Manipuri", "meiteilon": "Manipuri", "oriya": "Odia",
+                    "bangla": "Bengali", "assamiya": "Assamese", "lushai": "Mizo", "tripuri": "Kokborok",
+                    "nagpuri (sadri)": "Nagpuri", "sadri": "Nagpuri", "kumauni": "Kumaoni", "chhattisgarhi (cg)": "Chhattisgarhi"}
+INDIAN_LOWER = {x.lower() for x in INDIAN_LANGUAGES} | set(LANGUAGE_ALIASES)
 
 TITLE_COLUMNS = [
     "Title Name", "IMDb ID", "Category", "Release Date", "Release Status", "Genre", "Language",
     "Produce by", "Studio", "Network", "Director", "Cast", "Teaser / Trailer on YouTube",
-    "Top 3 YouTube Channels", "YouTube Channel Roles", "Type / Platform", "Certificate Type", "Certificate No.", "Duration",
+    "Top YouTube Channels", "YouTube Channel Roles", "Type / Platform", "Certificate Type", "Certificate No.", "Duration",
     "CBFC Office", "Origin", "OTT Window (Pay 1 / Library)", "Source",
 ]
 COVERAGE_COLUMNS = ["Title", "IMDb ID", "Language", "Year", "Origin", "Window", "Wikidata",
@@ -249,10 +278,40 @@ OMDB_MAX_TITLES = 150                 # free OMDb key: 1,000 requests a day
 
 LANG_CODES = {"Hindi": "hi", "Tamil": "ta", "Telugu": "te", "Malayalam": "ml", "Kannada": "kn",
               "Marathi": "mr", "Bengali": "bn", "Gujarati": "gu", "Punjabi": "pa", "Odia": "or",
-              "Bhojpuri": "bho", "Assamese": "as", "Tulu": "tcy", "Urdu": "ur", "English": "en"}
+              "Bhojpuri": "bho", "Assamese": "as", "Tulu": "tcy", "Urdu": "ur", "English": "en",
+              "Konkani": "kok", "Rajasthani": "raj", "Marwari": "mwr", "Haryanvi": "bgc", "Garhwali": "gbm",
+              "Kumaoni": "kfy", "Kashmiri": "ks", "Dogri": "doi", "Chhattisgarhi": "hne", "Maithili": "mai",
+              "Magahi": "mag", "Awadhi": "awa", "Braj": "bra", "Bundeli": "bns", "Santali": "sat", "Manipuri": "mni",
+              "Mizo": "lus", "Khasi": "kha", "Garo": "grt", "Kokborok": "trp", "Bodo": "brx", "Nepali": "ne",
+              "Sindhi": "sd", "Sanskrit": "sa", "Angika": "anp", "Nagpuri": "sck", "Kurukh": "kru", "Ladakhi": "lbj",
+              "Lepcha": "lep", "Malvi": "mup", "Badaga": "bfq", "Kodava": "kfa", "Beary": "bcy",
+              "Saurashtra": "saz", "Sambalpuri": "spv", "Pahari": "him", "Banjara": "lmn"}
 CODE_LANGS = {v: k for k, v in LANG_CODES.items()}
-IMDB_MOVIE_TYPES = ["movie", "tvMovie"]
+IMDB_MOVIE_TYPES = ["movie", "tvMovie"]               # how IMDb title types are classified
 IMDB_TV_TYPES = ["tvSeries", "tvMiniSeries"]
+# The discovery rule, as an IMDb Advanced Search URL. START_DATE / END_DATE come from the run's window
+# (options 1-3 compute them, option 5 "Custom" takes any From / To), so the timeframe is always adjustable.
+# Title types can be changed with the env var INDIAN_TRACKER_IMDB_TITLE_TYPES (e.g. "feature,tv_series,tv_miniseries").
+IMDB_SEARCH_URL_TEMPLATE = ("https://www.imdb.com/search/title/?title_type={TITLE_TYPES}"
+                            "&release_date={START_DATE},{END_DATE}&countries=IN")
+IMDB_RULE_TITLE_TYPES = os.getenv("INDIAN_TRACKER_IMDB_TITLE_TYPES", "feature,tv_series")
+URL_TYPE_TO_GRAPHQL = {"feature": "movie", "tv_movie": "tvMovie", "tv_series": "tvSeries",
+                       "tv_miniseries": "tvMiniSeries", "tv_special": "tvSpecial", "short": "short"}
+
+
+def imdb_rule_url(start: date, end: date, title_types: str = "") -> str:
+    """The IMDb Advanced Search page for a window, e.g. feature,tv_series released START..END in India."""
+    return IMDB_SEARCH_URL_TEMPLATE.format(TITLE_TYPES=title_types or IMDB_RULE_TITLE_TYPES,
+                                           START_DATE=start.isoformat(), END_DATE=end.isoformat())
+
+
+def imdb_rule_kinds(title_types: str = "") -> list[tuple[str, list[str]]]:
+    """('Movie', [...]), ('TV Show', [...]) GraphQL title types from the rule's title_type list."""
+    ids = [URL_TYPE_TO_GRAPHQL[x.strip()] for x in (title_types or IMDB_RULE_TITLE_TYPES).split(",")
+           if x.strip() in URL_TYPE_TO_GRAPHQL]
+    movie = [x for x in ids if x not in IMDB_TV_TYPES]
+    tv = [x for x in ids if x in IMDB_TV_TYPES]
+    return [k for k in (("Movie", movie), ("TV Show", tv)) if k[1]]
 IMDB_FIELDS = (
     "id titleText{text} titleType{id} releaseDate{day month year} genres{genres{text}} "
     "spokenLanguages{spokenLanguages{text}} countriesOfOrigin{countries{id}} "
@@ -354,7 +413,7 @@ class Title:
 
     def row(self) -> dict[str, str]:
         trailer = self.trailer_url or YT_RESULTS + quote_plus(f"{self.title} official trailer")
-        chans = "\n".join(f"{c}|{self.title}" for c in self.youtube_channels[:3])
+        chans = "\n".join(f"{c}|{self.title}" for c in self.youtube_channels)
         net = self.network
         if not net:
             m = re.search(r"(?:OTT|TV)\s*\(([^)]+)\)", self.type_platform or "")
@@ -364,8 +423,8 @@ class Title:
             "Release Date": self.release_date, "Release Status": self.status, "Genre": self.genre,
             "Language": self.language, "Produce by": self.produced_by,
             "Studio": self.studio or self.produced_by, "Network": net, "Director": self.director,
-            "Cast": self.cast, "Teaser / Trailer on YouTube": trailer, "Top 3 YouTube Channels": chans,
-            "YouTube Channel Roles": "\n".join(ROLE_LABELS.get(r, r) for r in self.youtube_roles[:3]),
+            "Cast": self.cast, "Teaser / Trailer on YouTube": trailer, "Top YouTube Channels": chans,
+            "YouTube Channel Roles": "\n".join(ROLE_LABELS.get(r, r) for r in self.youtube_roles),
             "Type / Platform": self.type_platform, "Certificate Type": self.certificate_type,
             "Certificate No.": self.certificate_no, "Duration": self.duration,
             "CBFC Office": self.cbfc_office, "Origin": self.origin,
@@ -375,7 +434,7 @@ class Title:
         return {k: (v if v else "—") for k, v in values.items()}
 
 
-ROLE_LABELS = {"studio": "Studio", "producer": "Producer", "distributor": "Distributor", "network": "Network / OTT",
+ROLE_LABELS = {"studio_channel": "Studio (official channel)", "studio": "Studio", "producer": "Producer", "distributor": "Distributor", "network": "Network / OTT",
                "music": "Music company", "director": "Director", "actor": "Actor/Actress"}
 
 MERGE_FIELDS = ("imdb_id", "genre", "produced_by", "studio", "network", "director", "cast",
@@ -505,6 +564,46 @@ def pick_official_channels(t: "Title", results: list[list[dict[str, Any]]], toda
     if ordered:
         trailer = "https://www.youtube.com/watch?v=" + ordered[0][1][2]
     return trailer, [(url, role) for url, (_, role, _) in ordered]
+
+
+def parse_youtube_channel_results(html: str) -> list[dict[str, Any]] | None:
+    """Channels from a YouTube channel search (sp=EgIQAg%3D%3D); None when the page is blocked."""
+    m = re.search(r"var ytInitialData = (\{.*?\});</script>", html, re.S)
+    if not m:
+        return None
+    found: list = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            if "channelRenderer" in o:
+                found.append(o["channelRenderer"])
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(json.loads(m.group(1)))
+    out = []
+    for c in found:
+        ep = ((c.get("navigationEndpoint") or {}).get("browseEndpoint") or {})
+        if not ep:
+            continue
+        out.append({"name": (c.get("title") or {}).get("simpleText", ""),
+                    "ch": "https://www.youtube.com" + (ep.get("canonicalBaseUrl") or "/channel/" + ep.get("browseId", "")),
+                    "ver": "VERIFIED" in json.dumps(c.get("ownerBadges") or [])})
+    return out
+
+
+def pick_studio_channel(studio: str, channels: list[dict[str, Any]]) -> str:
+    """The studio's official channel: a verified channel of the same name, else the top result if its name
+    matches exactly (look-alike copies further down, e.g. a second unverified 'Hombale Films', are ignored)."""
+    matching = [c for c in channels[:5] if channel_matches(c["name"], studio)]
+    verified = next((c for c in matching if c["ver"]), None)
+    if verified:
+        return verified["ch"]
+    if channels and channels[0] in matching and channel_core(channels[0]["name"]) == channel_core(studio):
+        return channels[0]["ch"]
+    return ""
 
 
 def merge_titles(groups: list[list[Title]]) -> list[Title]:
@@ -863,6 +962,7 @@ class IndianReleaseTrackerService:
         self.omdb_api_key = omdb_api_key
         self.imdb_service = imdb_service
         self.imdb_blocked = False
+        self._tmdb_token_bad = False
         self.notes: list[str] = []
 
     # -- HTTP --------------------------------------------------------------------------------
@@ -944,8 +1044,16 @@ class IndianReleaseTrackerService:
         by_status = ", ".join(f"{s}: {sum(t.status == s for t in titles)}" for s in STATUSES if any(t.status == s for t in titles))
         summary = (f"Mode {mode} – {window_text}. {len(titles)} titles ({movies} movies, {len(titles) - movies} TV shows); "
                    f"{sum(t.validated == 'IMDb' for t in titles)} validated on IMDb, {sum(t.validated == 'TMDB' for t in titles)} on TMDB; "
-                   f"{sum(bool(t.imdb_id) for t in titles)} with an IMDb ID, {with_yt} with Top 3 YouTube channels, "
+                   f"{sum(bool(t.imdb_id) for t in titles)} with an IMDb ID, {with_yt} with Top YouTube channels, "
                    f"{with_net} with a Network. {by_status}.")
+        tv_sources: dict[str, int] = {}
+        for t in titles:
+            if t.category == "TV Show":
+                src = ("TMDB" if any("themoviedb" in u for u in t.source_urls) else "IMDb" if t.validated == "IMDb"
+                       else "JustWatch" if any("justwatch" in u for u in t.source_urls) else "Wikipedia")
+                tv_sources[src] = tv_sources.get(src, 0) + 1
+        summary += (" TV shows by source: " + (", ".join(f"{k} {v}" for k, v in tv_sources.items()) or "none") + ".")
+        summary += f" Build {BUILD_ID}."
         summary += (f" The first table has all {len(rows)} titles; Movies ({len(movie_rows)}) and TV Shows ({len(tv_rows)}) "
                     "follow as separate tables with their own BDR ingest templates.")
         if notes:
@@ -1074,6 +1182,8 @@ class IndianReleaseTrackerService:
                 return bool(rows), f"{len(rows)} titles parsed, e.g. {', '.join(r.title for r in rows[:3]) or '-'}"
             listing_probes.append((f"Listing page: {name}", site))
 
+        checks.append({"source": "Build (git commit live on this server)", "status": "OK", "seconds": "0.0",
+                       "detail": BUILD_ID})
         for name, fn in (("IMDb Advanced Search (GraphQL)", imdb), ("IMDb suggestion API (IDs)", imdb_suggest),
                          ("TMDB India discovery (IMDb fallback)", tmdb_discover),
                          ("IMDb list", imdb_list), ("JustWatch India", justwatch),
@@ -1117,9 +1227,11 @@ class IndianReleaseTrackerService:
 
     def _imdb_advanced_search(self, start, end, include_tv, languages, today, progress) -> list[Title]:
         """IMDb Advanced Title Search: India-origin titles released in the window (movies + TV)."""
-        kinds = [("Movie", IMDB_MOVIE_TYPES)] + ([("TV Show", IMDB_TV_TYPES)] if include_tv else [])
+        kinds = [k for k in imdb_rule_kinds() if include_tv or k[0] == "Movie"]
         wanted = {l.lower() for l in languages}
         out: list[Title] = []
+        rule_url = imdb_rule_url(start, end)
+        self.notes.append(f"IMDb rule: {rule_url}")
         for category, types in kinds:
             after, pages, total = None, 0, 0
             while pages < IMDB_SEARCH_MAX_PAGES:
@@ -1147,6 +1259,7 @@ class IndianReleaseTrackerService:
                 for edge in data.get("edges") or []:
                     t = self._imdb_title(edge["node"]["title"], category, wanted, today)
                     if t:
+                        t.add_url(rule_url)
                         out.append(t)
                 pages += 1
                 info = data.get("pageInfo") or {}
@@ -1162,7 +1275,8 @@ class IndianReleaseTrackerService:
         """Map an IMDb GraphQL title. India release date wins over the worldwide one."""
         names = lambda key, path: [e["node"][path[0]][path[1]]["text"]  # noqa: E731
                                    for e in ((t.get(key) or {}).get("edges") or [])]
-        langs = [x["text"] for x in ((t.get("spokenLanguages") or {}).get("spokenLanguages") or [])]
+        langs = [LANGUAGE_ALIASES.get(x["text"].lower(), x["text"])
+                 for x in ((t.get("spokenLanguages") or {}).get("spokenLanguages") or [])]
         indian = [l for l in langs if l.lower() in INDIAN_LOWER]
         if indian and wanted and not any(l.lower() in wanted for l in indian):
             return None                                   # a language the user unticked
@@ -1326,9 +1440,16 @@ class IndianReleaseTrackerService:
     def _tmdb(self, path: str, params: dict | None = None) -> dict:
         params = dict(params or {})
         headers = {"Accept": "application/json"}
-        if self.tmdb_token:
-            headers["Authorization"] = f"Bearer {self.tmdb_token}"
-        elif self.tmdb_api_key:
+        if self.tmdb_token and not self._tmdb_token_bad:
+            r = self.http.session.get(TMDB_API + path, params=params,
+                                      headers={**headers, "Authorization": f"Bearer {self.tmdb_token}"},
+                                      timeout=self.http.timeout_seconds)
+            if r.status_code != 401 or not self.tmdb_api_key:
+                r.raise_for_status()
+                return r.json()
+            self._tmdb_token_bad = True              # bad/expired token -> use the API key from now on
+            self.notes.append("TMDB read-access token rejected (401); used TMDB_API_KEY instead.")
+        if self.tmdb_api_key:
             params["api_key"] = self.tmdb_api_key
         return self._get_json(TMDB_API + path, params, headers)
 
@@ -1379,7 +1500,9 @@ class IndianReleaseTrackerService:
             return []
         wanted = {LANG_CODES[l] for l in languages if l in LANG_CODES}
         found: list[tuple[str, int]] = []
-        kinds = [("movie", "primary_release_date")] + ([("tv", "first_air_date")] if include_tv else [])
+        rule = [k for k, _ in imdb_rule_kinds()]
+        kinds = ([("movie", "primary_release_date")] if "Movie" in rule else []) + \
+                ([("tv", "first_air_date")] if include_tv and "TV Show" in rule else [])
         try:
             for kind, field in kinds:
                 chunk_start = start
@@ -1765,6 +1888,23 @@ class IndianReleaseTrackerService:
             except Exception:
                 return None
 
+        studio_cache: dict[str, str] = {}
+
+        def studio_channel(studio: str) -> str:
+            key = norm(studio)
+            if key in studio_cache:
+                return studio_cache[key]
+            url = ""
+            if not state["blocked"] and channel_core(studio) not in _GENERIC:
+                try:
+                    chans = parse_youtube_channel_results(
+                        self.http.get_text(YT_RESULTS + quote_plus(studio) + "&sp=EgIQAg%3D%3D"))
+                    url = pick_studio_channel(studio, chans or [])
+                except Exception:
+                    url = ""
+            studio_cache[key] = url
+            return url
+
         def one(t: Title) -> None:
             lang = t.language.split(" (")[0].split()[0] if t.language and t.language != "Unspecified" else ""
             base = re.sub(r"\s*\(.*?\)\s*", " ", t.title).strip()
@@ -1782,6 +1922,12 @@ class IndianReleaseTrackerService:
                 else:
                     return
             trailer, chans = pick_official_channels(t, [r or [] for r in results], today)
+            studios = list(dict.fromkeys([n.strip() for n in re.split(r",\s*", t.studio or "") if n.strip()]
+                                         + t.credits.get("studio", [])))[:4]
+            for studio in studios:
+                url = studio_channel(studio)
+                if url and url not in [u for u, _ in chans]:
+                    chans.append((url, "studio_channel"))
             if chans:
                 t.youtube_channels = [u for u, _ in chans]
                 t.youtube_roles = [r for _, r in chans]
@@ -1795,7 +1941,8 @@ class IndianReleaseTrackerService:
         progress(70, f"YouTube: official channels for {len(targets)} titles")
         with ThreadPoolExecutor(max_workers=YOUTUBE_WORKERS) as pool:
             list(pool.map(one, targets))
-        self.notes.append(f"YouTube: official (credited) channels found for {state['found']} of {len(targets)} titles; "
+        self.notes.append(f"YouTube: official channels found for {state['found']} of {len(targets)} titles "
+                          f"(credited trailer channels + {sum(1 for v in studio_cache.values() if v)} studio channels); "
                           "titles without a credited channel are left blank rather than guessed.")
         if state["blocked"]:
             self.notes.append("YouTube's results page was blocked for the server"
