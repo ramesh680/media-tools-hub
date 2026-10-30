@@ -28,6 +28,7 @@ from app.services.validator_history import ValidatorHistoryRepository
 from app.services.validator_jobs import ValidatorJobManager
 from app.services.movie_trailer_feed import MovieTrailerFeedService
 from app.services.youtube_release_verifier import YouTubeReleaseVerifierService
+from app.services.indian_release_tracker import INDIAN_LANGUAGES, IndianReleaseTrackerService
 
 
 settings = get_settings()
@@ -47,6 +48,9 @@ imdb_verifier_service = IMDbBulkVerifierService(imdb_service)
 box_office_service = BoxOfficeMojoService(http_client)
 billboard_service = BillboardArtist100Service(http_client, imdb_service)
 youtube_release_verifier_service = YouTubeReleaseVerifierService(http_client, settings.youtube_api_key)
+# Web version of the indian-regional-release-tracker skill (Wikipedia, IMDb calendar, Wikidata,
+# YouTube top-3 channels, CBFC website). See app/services/indian_release_tracker.py.
+indian_release_tracker_service = IndianReleaseTrackerService(http_client, settings.youtube_api_key)
 # Straight scrape of the newest MovieInsider trailer listing pages (first two by
 # default) exported as Excel/CSV. No YouTube API, no channel validation.
 movie_trailer_feed_service = MovieTrailerFeedService(http_client)
@@ -136,6 +140,55 @@ def youtube_release_verifier(request: Request) -> HTMLResponse:
             "youtube_api_enabled": bool(settings.youtube_api_key),
         },
     )
+
+
+@app.get("/indian-release-tracker", response_class=HTMLResponse)
+def indian_release_tracker(request: Request) -> HTMLResponse:
+    today = date.today()
+    return templates.TemplateResponse(
+        request,
+        "indian_release_tracker.html",
+        {
+            "recent_runs": history_repository.list_recent(),
+            "youtube_api_enabled": bool(settings.youtube_api_key),
+            "languages": INDIAN_LANGUAGES,
+            "today_iso": today.isoformat(),
+            "next_year_iso": today.replace(year=today.year + 1).isoformat() if not (today.month == 2 and today.day == 29)
+            else (today + timedelta(days=365)).isoformat(),
+        },
+    )
+
+
+@app.post("/indian-release-tracker/start", response_class=HTMLResponse)
+async def start_indian_release_tracker(request: Request, bulk_file: UploadFile | None = File(None)) -> HTMLResponse:
+    form = await request.form()
+    mode = str(form.get("mode") or "2")
+    languages = [str(v) for v in form.getlist("languages")]
+    filename = bulk_file.filename if bulk_file and bulk_file.filename else ""
+    file_content = await bulk_file.read() if bulk_file and bulk_file.filename else None
+    bulk_text = str(form.get("bulk_text") or "")
+    if mode == "4" and not file_content and not bulk_text.strip():
+        return _error_response(request, "Title list needed",
+                               "Option 4 works only on your titles: upload a CSV/Excel list or paste titles, then run again.")
+    job = job_manager.start(
+        "indian_release_tracker",
+        lambda progress: IndianReleaseTrackerService(http_client, settings.youtube_api_key).run(
+            mode=mode,
+            custom_start=str(form.get("custom_start") or ""),
+            custom_end=str(form.get("custom_end") or ""),
+            languages=languages,
+            include_tv=form.get("include_tv") == "on",
+            youtube_scope=str(form.get("youtube_scope") or "recent"),
+            check_cbfc=form.get("check_cbfc") == "on",
+            file_content=file_content,
+            filename=filename,
+            bulk_text=bulk_text,
+            api_key_override=str(form.get("youtube_api_key") or ""),
+            notes=str(form.get("notes") or ""),
+            progress=progress,
+        ),
+    )
+    return _progress_response(request, job.to_dict())
 
 
 @app.post("/imdb-verifier/start", response_class=HTMLResponse)
