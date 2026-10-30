@@ -25,6 +25,14 @@ Server-side sources (all public, no login):
     fill missing IMDb IDs, genres, directors, cast, production companies, TV networks and the
     India streaming provider, so rows carry what the BDR ingest template needs
   * Wikidata SPARQL (CC0) to resolve uploaded titles <-> IMDb IDs, studio, network
+  * JustWatch India (apis.justwatch.com GraphQL): upcoming and newly added titles on every Indian
+    OTT service JustWatch tracks - Netflix, Prime Video, Amazon Video, JioHotstar, ZEE5, Sony LIV,
+    Sun NXT, aha, hoichoi, ManoramaMAX, MX Player, Chaupal, Hungama, ShemarooMe, BookMyShow Stream,
+    EPIC ON - kept when India is a production country; gives the OTT platform and date
+  * IMDb lists (e.g. ls548141776 "Most Anticipated Indian Movies") via the list page + IMDb GraphQL
+  * Listing pages (best effort, generic table / "date -> title -> language" card parser): Sacnilk
+    upcoming, BoxOfficeIndia24 OTT upcoming, OTTDrop, OTTweek, OTT Movie Releases, Binged, Filmibeat,
+    91mobiles, District, What's on Netflix (India 2026), About Amazon India (Prime Video upcoming)
   * YouTube search results page (no key) for the trailer + Top 3 channels; YouTube Data API v3
     (YOUTUBE_API_KEY or the per-run key) as a fallback when the results page is blocked
   * CBFC official website "Search Film" - best effort, read live on every run (no PDFs)
@@ -88,6 +96,132 @@ CBFC_SEARCH_CANDIDATES = [
     "https://www.cbfcindia.gov.in/cbfcAdmin/search-film.php",
     "https://www.cbfcindia.gov.in/cbfcAdmin/search-result.php",
 ]
+JUSTWATCH_API = "https://apis.justwatch.com/graphql"
+JW_PACKAGES = {"nfx": "Netflix", "prv": "Amazon Prime Video", "amz": "Amazon Video", "jhs": "JioHotstar",
+               "zee": "ZEE5", "snl": "Sony LIV", "snx": "Sun NXT", "aha": "aha", "hoc": "hoichoi",
+               "mrx": "ManoramaMAX", "mxp": "MX Player", "mni": "Amazon MX Player", "acl": "Chaupal",
+               "hgp": "Hungama Play", "sme": "ShemarooMe", "bms": "BookMyShow Stream", "epc": "EPIC ON",
+               "upa": "Ultra Play"}
+JW_GENRES = {"act": "Action", "ani": "Animation", "cmy": "Comedy", "crm": "Crime", "doc": "Documentary",
+             "drm": "Drama", "fml": "Family", "fnt": "Fantasy", "hst": "History", "hrr": "Horror",
+             "msc": "Music", "rma": "Romance", "scf": "Sci-Fi", "spt": "Sport", "trl": "Thriller",
+             "war": "War", "wsn": "Western", "rly": "Reality", "eur": "Made in Europe"}
+JW_CONTENT = ("title originalReleaseDate productionCountries externalIds{imdbId} genres{shortName} "
+              "credits(role:DIRECTOR){name} upcomingReleases(releaseTypes:[DIGITAL]){releaseDate package{clearName}}")
+JW_QUERY = (
+    "query($d:Date!,$pt:NewPageType!,$after:String,$packages:[String!]){newTitles(country:IN,date:$d,first:100,"
+    "after:$after,filter:{packages:$packages},pageType:$pt,priceDrops:false){totalCount pageInfo{hasNextPage endCursor} "
+    "edges{newOffer(platform:WEB){package{clearName}} node{__typename ... on MovieOrShow{objectType "
+    'content(country:IN,language:"en"){' + JW_CONTENT + '}} ... on Season{content(country:IN,language:"en"){title} '
+    'show{content(country:IN,language:"en"){' + JW_CONTENT + "}}}}}}}")
+JW_NEW_DAYS = 45                      # "new on OTT" days scanned back from today
+JW_MAX_PAGES = 10
+IMDB_LISTS = [("ls548141776", "IMDb list – Most Anticipated Indian Movies")]
+# Listing pages parsed with the generic table / card parser (default language, default platform).
+LISTING_SITES = [
+    ("Sacnilk – upcoming movies", "https://www.sacnilk.com/upcoming-movies", "", ""),
+    ("BoxOfficeIndia24 – OTT upcoming", "https://www.boxofficeindia24.com/ott/upcoming", "", ""),
+    ("OTTDrop", "https://www.ottdrop.com/", "", ""),
+    ("OTTweek", "https://ottweek.com/", "", ""),
+    ("OTT Movie Releases", "https://www.ottmoviereleases.com/", "", ""),
+    ("Binged", "https://www.binged.com/", "", ""),
+    ("Filmibeat – upcoming Tamil", "https://www.filmibeat.com/tamil/upcoming-movies.html", "Tamil", ""),
+    ("91mobiles – upcoming Tamil", "https://www.91mobiles.com/entertainment/upcoming-tamil-movies", "Tamil", ""),
+    ("District – upcoming movies", "https://www.district.in/movies/upcoming-movies", "", ""),
+    ("BookMyShow – upcoming", "https://in.bookmyshow.com/explore/upcoming-movies", "", ""),
+    ("What's on Netflix – Indian originals 2026",
+     "https://www.whats-on-netflix.com/coming-soon/new-indian-netflix-original-series-and-movies-coming-to-netflix-in-2026",
+     "", "Netflix"),
+    ("About Amazon India – Prime Video upcoming",
+     "https://www.aboutamazon.in/news/entertainment/new-upcoming-shows-movies-prime-video-india", "", "Amazon Prime Video"),
+]
+LISTING_MAX_ROWS = 400
+DATE_RX = re.compile(
+    r"\b(?:(\d{1,2})(?:st|nd|rd|th)?[ \-/.]+([A-Za-z]{3,9})[ ,\-/.]+(\d{4})|"
+    r"([A-Za-z]{3,9})[ .]+(\d{1,2})(?:st|nd|rd|th)?,?[ ]+(\d{4})|(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4}))\b")
+LISTING_STOP = re.compile(r"^(releasing|released|coming soon|upcoming|today|tomorrow|read more|watch|trailer|"
+                          r"book|advertise|login|subscribe|home|menu|search|share|more|news|all |genre|language|"
+                          r"release status|ott|box office|follow us|in this video)", re.I)
+PLATFORM_RX = re.compile(r"netflix|prime video|amazon|jiohotstar|hotstar|zee5|sony ?liv|sun ?nxt|\baha\b|hoichoi|"
+                         r"chaupal|planet marathi|manorama ?max|mx player|etv win|lionsgate play|discovery\+", re.I)
+
+
+def parse_listing_date(text: str) -> date | None:
+    m = DATE_RX.search(text or "")
+    if not m:
+        return None
+    try:
+        if m.group(1):
+            mon = MONTHS.get(m.group(2)[:3].lower())
+            return date(int(m.group(3)), mon, int(m.group(1))) if mon else None
+        if m.group(4):
+            mon = MONTHS.get(m.group(4)[:3].lower())
+            return date(int(m.group(6)), mon, int(m.group(5))) if mon else None
+        return date(int(m.group(9)), int(m.group(8)), int(m.group(7)))      # dd/mm/yyyy (Indian order)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_listing_page(html: str, site: str, default_lang: str, default_platform: str, today: date) -> list[Title]:
+    """Generic: (1) tables with a title + date column, (2) card text 'date -> title -> language/platform'."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "nav", "footer", "header"]):
+        tag.decompose()
+    found: dict[str, Title] = {}
+
+    def add(title: str, d: date | None, lang: str = "", platform: str = "", category: str = "Movie") -> None:
+        title = clean(re.sub(r"\s*\((?:19|20)\d\d\)\s*$", "", title))
+        if not title or len(title) > 80 or len(title) < 2 or LISTING_STOP.match(title) or DATE_RX.search(title):
+            return
+        if PLATFORM_RX.fullmatch(title) or title.lower() in INDIAN_LOWER | {"english"}:
+            return                                        # a platform or language cell, not a title
+        if d is None or not (2023 <= d.year <= today.year + 3) or norm(title) in found:
+            return
+        if re.search(r"\bseason\b|\bs\d{1,2}\b|series", title, re.I):
+            category = "TV Show"
+        net = platform or default_platform
+        t = Title(title=title, category=category, language=lang or default_lang or "Unspecified", network=net,
+                  release_date=d.strftime("%d %b %Y"), sort_date=d.isoformat(),
+                  status=status_for(d.isoformat(), today, "Tentative"),
+                  type_platform=f"OTT ({net})" if net else "Film – Theatrical", source=site,
+                  origin="International" if (lang or default_lang) == "English" else "Indian")
+        found[norm(title)] = t
+
+    for table in soup.select("table"):
+        grid = table_grid(table)
+        if len(grid) < 2:
+            continue
+        head = [c.lower() for c in grid[0]]
+        c_t = next((i for i, h in enumerate(head) if re.search(r"movie|title|film|show|series|name", h)), -1)
+        c_d = next((i for i, h in enumerate(head) if re.search(r"date|release", h)), -1)
+        c_l = next((i for i, h in enumerate(head) if "language" in h), -1)
+        c_p = next((i for i, h in enumerate(head) if re.search(r"platform|ott|network|streaming", h)), -1)
+        if c_t < 0 or c_d < 0:
+            continue
+        for row in grid[1:]:
+            g = lambda i: row[i] if 0 <= i < len(row) else ""  # noqa: E731
+            add(g(c_t), parse_listing_date(g(c_d)), g(c_l).title() if g(c_l) else "",
+                (PLATFORM_RX.search(g(c_p)) or [""])[0] if g(c_p) else "")
+
+    lines = [l.strip() for l in soup.get_text("\n").split("\n") if l.strip()]
+    for i, line in enumerate(lines):
+        if len(found) >= LISTING_MAX_ROWS:
+            break
+        d = parse_listing_date(line)
+        if not d or len(line) > 40:
+            continue
+        j = i + 1
+        while j < len(lines) and j <= i + 3 and (LISTING_STOP.match(lines[j]) or parse_listing_date(lines[j])):
+            j += 1
+        if j >= len(lines):
+            continue
+        tail = " | ".join(lines[j + 1:j + 4])
+        lang = next((l for l in INDIAN_LANGUAGES + ["English"] if re.search(rf"\b{l}\b", tail)), "")
+        plat = PLATFORM_RX.search(tail)
+        add(lines[j], d, lang, plat.group(0) if plat else "")
+    return list(found.values())
+
+
 TV_LISTS = [
     ("List of Netflix India original programming", "Netflix"),
     ("List of Amazon India originals", "Prime Video"),
@@ -128,6 +262,7 @@ IMDB_SEARCH_QUERY = (
     'originCountryConstraint:{allCountries:["IN"]}},'
     "sort:{sortBy:RELEASE_DATE,sortOrder:ASC}){total pageInfo{hasNextPage endCursor} "
     "edges{node{title{" + IMDB_FIELDS + "}}}}}")
+IMDB_TITLES_QUERY = "query($ids:[ID!]!){titles(ids:$ids){" + IMDB_FIELDS + "}}"
 
 
 # --------------------------------------------------------------------------------------------
@@ -601,6 +736,9 @@ class IndianReleaseTrackerService:
             years = list(range(start.year, end.year + 1))
             groups.append(self._imdb_advanced_search(start, end, include_tv, languages, today, progress))
             groups.append(self._wikipedia_films(languages, years, today, progress))
+            groups.append(self._imdb_lists(today, progress))
+            groups.append(self._justwatch(start, end, today, progress))
+            groups.append(self._listing_sites(languages, today, progress))
             if include_tv:
                 groups.append(self._wikipedia_tv(today, progress))
         if listed:
@@ -721,9 +859,28 @@ class IndianReleaseTrackerService:
             return (form is not None), (f"Search Film form found: {form[1].upper()} {form[0]} (field '{form[3]}')"
                                         if form else "no Search Film form served to this server")
 
-        for name, fn in (("IMDb Advanced Search (GraphQL)", imdb), ("TMDB API", tmdb), ("OMDb API", omdb),
+        def justwatch():
+            page = self._jw({"d": today.isoformat(), "pt": "UPCOMING", "after": None, "packages": list(JW_PACKAGES)})
+            indian = [t.title for t in (self._jw_title(e, today, today) for e in page.get("edges") or []) if t]
+            return True, f"{page.get('totalCount')} upcoming OTT titles in India; Indian-made on page 1: {', '.join(indian[:4]) or 'none'}"
+
+        def imdb_list():
+            html = self.http.get_text(f"https://www.imdb.com/list/{IMDB_LISTS[0][0]}/")
+            ids = list(dict.fromkeys(re.findall(r'"listItem":\{"id":"(tt\d+)"', html)))
+            return bool(ids), f"{IMDB_LISTS[0][0]}: {len(ids)} titles"
+
+        listing_probes = []
+        for name, url, lang, platform in LISTING_SITES:
+            def site(url=url, name=name, lang=lang, platform=platform):
+                rows = parse_listing_page(self.http.get_text(url), name, lang, platform, today)
+                return bool(rows), f"{len(rows)} titles parsed, e.g. {', '.join(r.title for r in rows[:3]) or '-'}"
+            listing_probes.append((f"Listing page: {name}", site))
+
+        for name, fn in (("IMDb Advanced Search (GraphQL)", imdb), ("IMDb list", imdb_list), ("JustWatch India", justwatch),
+                         ("TMDB API", tmdb), ("OMDb API", omdb),
                          ("YouTube results page", youtube_page), ("YouTube Data API", youtube_api),
-                         ("Wikipedia API", wikipedia), ("Wikidata SPARQL", wikidata), ("CBFC website", cbfc)):
+                         ("Wikipedia API", wikipedia), ("Wikidata SPARQL", wikidata), ("CBFC website", cbfc),
+                         *listing_probes):
             probe(name, fn)
         return checks
 
@@ -948,6 +1105,128 @@ class IndianReleaseTrackerService:
             t.source += "; OMDb"
         if filled:
             self.notes.append(f"OMDb filled gaps for {filled} titles.")
+
+    def _imdb_details(self, ids: list[str], today: date, category_hint: str = "") -> list[Title]:
+        out: list[Title] = []
+        for i in range(0, len(ids), 50):
+            r = self.http.session.post(IMDB_GRAPHQL, timeout=self.http.timeout_seconds,
+                                       headers={"content-type": "application/json"},
+                                       json={"query": IMDB_TITLES_QUERY, "variables": {"ids": ids[i:i + 50]}})
+            for t in (r.json().get("data") or {}).get("titles") or []:
+                if not t:
+                    continue
+                cat = "TV Show" if (t.get("titleType") or {}).get("id") in IMDB_TV_TYPES else "Movie"
+                row = self._imdb_title(t, category_hint or cat, set(), today)
+                if row:
+                    out.append(row)
+        return out
+
+    def _imdb_lists(self, today, progress) -> list[Title]:
+        out: list[Title] = []
+        for list_id, label in IMDB_LISTS:
+            progress(9, f"{label}")
+            try:
+                html = self.http.get_text(f"https://www.imdb.com/list/{list_id}/")
+                ids = list(dict.fromkeys(re.findall(r'"listItem":\{"id":"(tt\d+)"', html)))
+                rows = self._imdb_details(ids, today)
+                for r in rows:
+                    r.source = f"{label} ({list_id})"
+                out.extend(rows)
+            except Exception as exc:
+                self.notes.append(f"{label} not reachable ({exc.__class__.__name__}).")
+        return out
+
+    def _jw(self, variables: dict) -> dict:
+        r = self.http.session.post(JUSTWATCH_API, timeout=self.http.timeout_seconds,
+                                   headers={"content-type": "application/json"},
+                                   json={"query": JW_QUERY, "variables": variables})
+        data = r.json()
+        if data.get("errors"):
+            raise RuntimeError(str(data["errors"])[:200])
+        return data["data"]["newTitles"]
+
+    @staticmethod
+    def _jw_title(edge: dict, page_date: date, today: date) -> Title | None:
+        node = edge.get("node") or {}
+        is_season = node.get("__typename") == "Season"
+        c = ((node.get("show") or {}).get("content") if is_season else node.get("content")) or {}
+        if "IN" not in (c.get("productionCountries") or []):
+            return None
+        offer = ((edge.get("newOffer") or {}).get("package") or {}).get("clearName", "")
+        ups = c.get("upcomingReleases") or []
+        d = None
+        if ups and ups[0].get("releaseDate"):
+            d = date.fromisoformat(ups[0]["releaseDate"][:10])
+            offer = offer or ((ups[0].get("package") or {}).get("clearName") or "")
+        elif edge.get("newOffer"):
+            d = page_date
+        elif c.get("originalReleaseDate"):
+            d = date.fromisoformat(c["originalReleaseDate"][:10])
+        season = clean(((node.get("content") or {}).get("title") or "")) if is_season else ""
+        title = c.get("title", "") + (f" – {season}" if season and season.lower() != "season 1" else "")
+        tv = is_season or node.get("objectType") == "SHOW"
+        return Title(
+            title=title, category="TV Show" if tv else "Movie",
+            imdb_id=((c.get("externalIds") or {}).get("imdbId") or ""),
+            genre=" / ".join(JW_GENRES.get(g["shortName"], g["shortName"]) for g in c.get("genres") or []),
+            director=", ".join(x["name"] for x in (c.get("credits") or [])[:3]), network=offer,
+            release_date=d.strftime("%d %b %Y") if d else "TBA (announced)", sort_date=d.isoformat() if d else None,
+            status=status_for(d.isoformat() if d else None, today, "Confirmed"),
+            type_platform=f"{'Web series' if tv else 'Film'} – OTT ({offer})" if offer else "OTT",
+            source=f"JustWatch India{' – ' + offer if offer else ''}")
+
+    def _justwatch(self, start, end, today, progress) -> list[Title]:
+        packages = list(JW_PACKAGES)
+        out: dict[str, Title] = {}
+
+        def keep(t: Title | None) -> None:
+            if t and (t.imdb_id or norm(t.title)) not in out:
+                out[t.imdb_id or norm(t.title)] = t
+
+        try:
+            progress(44, "JustWatch India: upcoming on OTT")
+            after = None
+            for _ in range(JW_MAX_PAGES):
+                page = self._jw({"d": today.isoformat(), "pt": "UPCOMING", "after": after, "packages": packages})
+                for e in page.get("edges") or []:
+                    keep(self._jw_title(e, today, today))
+                if not (page.get("pageInfo") or {}).get("hasNextPage"):
+                    break
+                after = page["pageInfo"]["endCursor"]
+            first = max(start, today - timedelta(days=JW_NEW_DAYS)) if start else today - timedelta(days=JW_NEW_DAYS)
+            day = min(end, today) if end else today
+            while day >= first:
+                progress(45, f"JustWatch India: new on OTT {day:%d %b}")
+                after = None
+                for _ in range(3):
+                    page = self._jw({"d": day.isoformat(), "pt": "NEW", "after": after, "packages": packages})
+                    for e in page.get("edges") or []:
+                        keep(self._jw_title(e, day, today))
+                    if not (page.get("pageInfo") or {}).get("hasNextPage"):
+                        break
+                    after = page["pageInfo"]["endCursor"]
+                day -= timedelta(days=1)
+        except Exception as exc:
+            self.notes.append(f"JustWatch India not fully reachable ({exc.__class__.__name__}).")
+        return list(out.values())
+
+    def _listing_sites(self, languages, today, progress) -> list[Title]:
+        wanted = {l.lower() for l in languages}
+        out: list[Title] = []
+        report = []
+        for name, url, lang, platform in LISTING_SITES:
+            progress(46, f"Listing pages: {name}")
+            try:
+                rows = parse_listing_page(self.http.get_text(url), name, lang, platform, today)
+            except Exception as exc:
+                report.append(f"{name}: blocked ({exc.__class__.__name__})")
+                continue
+            rows = [r for r in rows if r.language == "Unspecified" or r.language.lower() in wanted
+                    or r.language.lower() not in INDIAN_LOWER]
+            report.append(f"{name}: {len(rows)}")
+            out.extend(rows)
+        self.notes.append("Listing pages – " + "; ".join(report) + ".")
+        return out
 
     def _resolve_list(self, listed, today, progress) -> tuple[list[Title], list[dict[str, str]]]:
         progress(45, f"Resolving {len(listed)} listed titles on Wikidata")
