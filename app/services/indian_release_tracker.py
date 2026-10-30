@@ -934,6 +934,8 @@ class IndianReleaseTrackerService:
 
         progress(97, "Building result tables")
         rows = [t.row() for t in titles]
+        movie_rows = [r for r in rows if r["Category"] == "Movie"]
+        tv_rows = [r for r in rows if r["Category"] != "Movie"]
         window_text = ("your title list only" if only_list else
                        f"{start:%d %b %Y} → {end:%d %b %Y}" + (" + Date TBA titles" if keep_tba else ""))
         movies = sum(t.category == "Movie" for t in titles)
@@ -944,15 +946,19 @@ class IndianReleaseTrackerService:
                    f"{sum(t.validated == 'IMDb' for t in titles)} validated on IMDb, {sum(t.validated == 'TMDB' for t in titles)} on TMDB; "
                    f"{sum(bool(t.imdb_id) for t in titles)} with an IMDb ID, {with_yt} with Top 3 YouTube channels, "
                    f"{with_net} with a Network. {by_status}.")
+        summary += (f" The first table has all {len(rows)} titles; Movies ({len(movie_rows)}) and TV Shows ({len(tv_rows)}) "
+                    "follow as separate tables with their own BDR ingest templates.")
         if notes:
             summary += f" Custom notes: {clean(notes)}."
         if self.notes:
             summary += " Notes: " + " ".join(self.notes)
-        movie_rows = [r for r in rows if r["Category"] == "Movie"]
-        tv_rows = [r for r in rows if r["Category"] != "Movie"]
         # Two tables so each gets its own BDR ingest template (Movies / TV Shows) - the ingest
         # export maps a section's tracker_type to one title category.
-        sections = [{"key": "movies", "title": "Indian Regional Movies", "columns": TITLE_COLUMNS,
+        # 1) everything in one table (Category = Movie / TV Show), 2-3) one table per category, each with its
+        #    own BDR ingest template (the ingest export maps a table's tracker_type to one title category).
+        sections = [{"key": "all_titles", "title": f"All titles – {len(movie_rows)} movies + {len(tv_rows)} TV shows",
+                     "columns": TITLE_COLUMNS, "rows": rows, "row_count": len(rows), "supports_google": True}]
+        sections += [{"key": "movies", "title": "Indian Regional Movies", "columns": TITLE_COLUMNS,
                      "rows": movie_rows, "row_count": len(movie_rows), "supports_google": True,
                      "tracker_type": TRACKER_TYPE + "_movies"}]
         if tv_rows or not only_list:
@@ -1402,15 +1408,15 @@ class IndianReleaseTrackerService:
             except Exception:
                 return
             t = self._tmdb_title(d, kind, today)
-            # TMDB is user-edited: keep a title only if it has an IMDb ID or a credited production company
-            if t.imdb_id or t.studio:
+            # TMDB is user-edited: keep a title only if it has an IMDb ID, a production company or a TV network
+            if t.imdb_id or t.studio or (kind == "tv" and d.get("networks")):
                 rows.append(t)
 
         progress(40, f"TMDB India: details for {len(found)} titles")
         with ThreadPoolExecutor(max_workers=TMDB_WORKERS) as pool:
             list(pool.map(one, list(dict.fromkeys(found))))
         self.notes.append(f"TMDB India discovery: {len(rows)} titles kept of {len(found)} found "
-                          "(kept only with an IMDb ID or a production company).")
+                          "(kept only with an IMDb ID, a production company or a TV network).")
         return rows
 
     def _tmdb_enrich(self, titles: list[Title], today: date, progress) -> None:
