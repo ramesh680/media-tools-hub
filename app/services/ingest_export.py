@@ -98,6 +98,35 @@ def _date(v: Any) -> str:
     return m.group(0) if m else ""
 
 
+def _date_any(v: Any) -> str:
+    """'30 Oct 2026' / 'Oct 2026' / '2026-10-30' -> YYYY-MM-DD (day-less dates are dropped)."""
+    s = _s(v)
+    m = re.search(r"\d{4}-\d{2}-\d{2}", s)
+    if m:
+        return m.group(0)
+    m = re.fullmatch(r"(\d{1,2}) ([A-Za-z]{3,9}) (\d{4})", s)
+    if not m:
+        return ""
+    from datetime import datetime
+    for fmt in ("%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return ""
+
+
+def _first_network(v: Any) -> str:
+    """'Netflix, JioHotstar' -> 'Netflix'; '—' and other placeholders -> ''."""
+    s = _distributor(_first_of(v))
+    return "" if s in {"—", "–"} else s
+
+
+def _no_dash(v: Any) -> str:
+    s = _s(v)
+    return "" if s in {"—", "–", "-"} else s
+
+
 def _distributor(v: Any) -> str:
     """Distributor/network, with the scraper's placeholders treated as blank."""
     s = _s(v)
@@ -292,6 +321,33 @@ PROFILES: dict[str, IngestProfile] = {
             "release_scale": (["release_scale", "Scale"], _scale),
         },
         label="Upcoming Release Movies",
+    ),
+    # Indian Regional Release Tracker: one profile per table (Movies / TV Shows).
+    # Network = streaming/TV home (falls back to the studio), Language feeds the
+    # TV language type, IMDb/YouTube trailer links are passed through as found.
+    "indian-release-movies": IngestProfile(
+        "Movies",
+        ["Title Name", "Title"],
+        {
+            "imdb_id": (["IMDb ID", "IMDb URL"], _imdb),
+            "released_on": (["Release Date"], _date_any),
+            "network": (["Network", "Studio"], _first_network),
+            "genre": (["Genre"], _no_dash),
+            "original_language": (["Language"], _lang),
+        },
+        label="Indian Regional Release Tracker (Movies)",
+    ),
+    "indian-release-tv": IngestProfile(
+        "TV Shows",
+        ["Title Name", "Title"],
+        {
+            "imdb_id": (["IMDb ID", "IMDb URL"], _imdb),
+            "released_on": (["Release Date"], _date_any),
+            "network": (["Network", "Studio"], _first_network),
+            "genre": (["Genre"], _no_dash),
+            "original_language": (["Language"], _lang),
+        },
+        label="Indian Regional Release Tracker (TV Shows)",
     ),
     "game-release-calendar": IngestProfile(
         "Video Game",
@@ -494,6 +550,10 @@ TRACKER_INGEST = {
     "boxoffice": "box-office",
     "boxoffice_recent_opening": "box-office",
     "release_schedule_changes": "movie-release-calendar",
+    # Indian Regional Release Tracker splits its result into two tables, each
+    # registered with its own tracker_type (see ExportService).
+    "indian_release_tracker_movies": "indian-release-movies",
+    "indian_release_tracker_tv": "indian-release-tv",
 }
 
 
