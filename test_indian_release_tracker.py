@@ -53,10 +53,12 @@ def yt_page(videos):
 class WindowTests(unittest.TestCase):
     def test_modes(self):
         self.assertEqual(resolve_window("1", TODAY), (date(2024, 1, 1), date(2027, 10, 29), True))
-        self.assertEqual(resolve_window("2", TODAY), (date(2026, 10, 1), date(2027, 1, 29), False))
-        self.assertEqual(resolve_window("3", TODAY), (date(2026, 10, 1), date(2027, 4, 29), False))
+        self.assertEqual(resolve_window("2", TODAY), (date(2026, 10, 1), date(2026, 12, 31), False))
+        self.assertEqual(resolve_window("3", TODAY), (date(2026, 10, 1), date(2027, 3, 31), False))
         self.assertEqual(resolve_window("4", TODAY), (None, None, True))
         self.assertEqual(resolve_window("5", TODAY, "2027-03-31", "2027-01-01"), (date(2027, 1, 1), date(2027, 3, 31), False))
+        self.assertEqual(resolve_window("2", date(2026, 12, 15)), (date(2026, 12, 1), date(2027, 2, 28), False))  # across the year end
+        self.assertEqual(resolve_window("3", date(2027, 1, 31)), (date(2027, 1, 1), date(2027, 6, 30), False))
 
     def test_list_titles_always_kept(self):
         old = Title("Deep Jele Jai", sort_date="1959-05-01", from_list=True)
@@ -426,7 +428,7 @@ class EndToEndTests(unittest.TestCase):
         snap = svc.run(mode="2", languages=["Telugu"], include_tv=False, youtube_scope="none", today=TODAY)
         self.assertEqual([s["key"] for s in snap["sections"]], ["movies", "tv_shows"])
         titles = [r["Title Name"] for r in snap["sections"][0]["rows"]]
-        self.assertEqual(titles, ["Aakasamlo Oka Tara"])           # only 01 Oct 2026 -> 29 Jan 2027
+        self.assertEqual(titles, ["Aakasamlo Oka Tara"])           # only 01 Oct 2026 -> 31 Dec 2026
         self.assertEqual(snap["sections"][0]["columns"], TITLE_COLUMNS)
         self.assertIn("CBFC", snap["summary"])                      # CBFC blocked -> noted, not fatal
 
