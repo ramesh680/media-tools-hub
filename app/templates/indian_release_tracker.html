@@ -4,7 +4,7 @@
 <section class="irt" style="margin-bottom:14px">
   <p class="eyebrow" style="margin:0">India · Regional Languages</p>
   <h1 style="font-size:1.6rem; margin:4px 0 6px">Indian Regional Release Tracker</h1>
-  <p style="margin:0; color:var(--muted); font-size:0.9rem; max-width:860px">Movies and TV shows across 13 Indian languages – release date and status, language, producers, studio, network, cast, official trailer and Top 3 YouTube channels – checked against IMDb or TMDB. Download as CSV, Excel, Google Sheets or a BDR ingest template.</p>
+  <p style="margin:0; color:var(--muted); font-size:0.9rem; max-width:860px">Movies and TV shows across {{ languages|length }} Indian languages and dialects – release date and status, language, producers, studio, network, cast, official trailer and Top YouTube channels – checked against IMDb or TMDB. Download as CSV, Excel, Google Sheets or a BDR ingest template.</p>
 </section>
 
 <style>
@@ -18,7 +18,8 @@
   .irt-mode input { width: 13px; height: 13px; margin: 0; accent-color: var(--accent); }
   .irt-mode:has(input:checked) { background: var(--accent); border-color: var(--accent); color: #fff; }
   .irt-hint { margin: 8px 0 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
-  .irt-langs { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 4px 12px; }
+  .irt-langs { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 4px 12px; }
+  #irt-rule a { word-break: break-all; }
   .irt-check { display: inline-flex; align-items: center; gap: 7px; font-size: 0.88rem; font-weight: 500; color: var(--ink);
                text-transform: none; letter-spacing: 0; cursor: pointer; }
   .irt-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
@@ -50,6 +51,7 @@
         <label class="irt-mode"><input type="radio" name="mode" value="5"> Custom</label>
       </div>
       <p class="irt-hint" id="irt-mode-hint"></p>
+      <p class="irt-hint" id="irt-rule" data-show-not="4">IMDb rule: <a id="irt-rule-link" href="#" target="_blank" rel="noopener"></a></p>
 
       <div class="irt-row" data-show="5" hidden style="margin-top:10px">
         <label><span>From</span><input type="date" name="custom_start" value="{{ today_iso }}"></label>
@@ -70,7 +72,7 @@
       <legend>Languages <span class="irt-links"><a data-langs="all">all</a> · <a data-langs="none">none</a></span></legend>
       <div class="irt-langs">
         {% for lang in languages %}
-        <label class="irt-check"><input type="checkbox" name="languages" value="{{ lang }}" checked> {{ lang }}</label>
+        <label class="irt-check"><input type="checkbox" name="languages" value="{{ lang }}" checked> {{ lang }}{% if lang in ("Garhwali", "Kumaoni") %} <span style="color:var(--muted); font-size:0.78rem">(Uttarakhandi)</span>{% endif %}</label>
         {% endfor %}
       </div>
     </fieldset>
@@ -83,7 +85,7 @@
     <details>
       <summary>Advanced options</summary>
       <div class="irt-row">
-        <label><span>Top 3 YouTube channels for</span>
+        <label><span>Top YouTube channels for</span>
           <select name="youtube_scope">
             <option value="recent" selected>Listed + last 90 days + upcoming</option>
             <option value="all">Every title (slow, max 600)</option>
@@ -118,8 +120,22 @@
     form.querySelectorAll("[data-show]").forEach(el => { el.hidden = el.dataset.show !== mode; });
     form.querySelectorAll("[data-hide]").forEach(el => { el.hidden = el.dataset.hide === mode; });
     form.querySelector("#irt-mode-hint").textContent = hints[mode] || "";
+    // the IMDb rule for this window: title_type={{ imdb_title_types }}, release_date=START,END, countries=IN
+    const pad = n => String(n).padStart(2, "0"), iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const today = new Date("{{ today_iso }}T00:00:00"), first = new Date(today.getFullYear(), today.getMonth(), 1);
+    let s, e;
+    if (mode === "1") { s = new Date(2024, 0, 1); e = new Date(today.getFullYear() + 1, today.getMonth(), today.getDate()); }
+    else if (mode === "2") { s = first; e = new Date(first.getFullYear(), first.getMonth() + 3, 0); }
+    else if (mode === "3") { s = first; e = new Date(first.getFullYear(), first.getMonth() + 6, 0); }
+    else if (mode === "5") { s = new Date(form.custom_start.value + "T00:00:00"); e = new Date(form.custom_end.value + "T00:00:00"); }
+    const rule = form.querySelector("#irt-rule"), link = form.querySelector("#irt-rule-link");
+    rule.hidden = !s || isNaN(s) || isNaN(e);
+    if (!rule.hidden) {
+      link.href = link.textContent = {{ imdb_rule_template|tojson }}.replace("{START_DATE}", iso(s)).replace("{END_DATE}", iso(e));
+    }
   };
   form.querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", apply));
+  form.querySelectorAll("input[type=date]").forEach(d => d.addEventListener("change", apply));
   form.querySelectorAll("[data-langs]").forEach(a => a.addEventListener("click", e => {
     e.preventDefault();
     form.querySelectorAll("input[name=languages]").forEach(c => { c.checked = a.dataset.langs === "all"; });
