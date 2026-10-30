@@ -148,8 +148,8 @@ IMDB_TV = {
 
 
 class FakeResponse:
-    def __init__(self, payload=None, text=""):
-        self.payload, self.text = payload, text
+    def __init__(self, payload=None, text="", status_code=200):
+        self.payload, self.text, self.status_code = payload, text, status_code
 
     def raise_for_status(self):
         pass
@@ -361,10 +361,59 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(imdb_release(IMDB_MYSAA)[1], "27 Nov 2026")
 
 
+# Real TMDB response for Mysaa (captured 30 Oct 2026, trimmed).
+TMDB_MYSAA = {"id": 1504630, "title": "Mysaa", "original_language": "te", "release_date": "2026-11-27", "runtime": 157,
+              "origin_country": ["IN"], "genres": [{"name": "Action"}, {"name": "Drama"}, {"name": "Thriller"}],
+              "production_companies": [{"name": "UnFormula Films"}],
+              "release_dates": {"results": [{"iso_3166_1": "IN", "release_dates": [{"release_date": "2026-11-27T00:00:00.000Z", "type": 3}]}]},
+              "credits": {"cast": [{"name": n} for n in ["Rashmika Mandanna", "Easwari Rao", "Rahul Ravindran"]],
+                          "crew": [{"job": "Director", "name": "Rawindra Pulle"}, {"job": "Producer", "name": "Anil Sayyapureddy"},
+                                   {"job": "Producer", "name": "Ajay"}]},
+              "external_ids": {"imdb_id": "tt37454145"}, "watch/providers": {"results": {}}}
+
+
+class TmdbFallbackTests(unittest.TestCase):
+    def test_tmdb_title_mapping(self):
+        t = IndianReleaseTrackerService._tmdb_title(TMDB_MYSAA, "movie", TODAY)
+        self.assertEqual((t.title, t.category, t.language, t.sort_date, t.studio, t.produced_by, t.imdb_id, t.validated),
+                         ("Mysaa", "Movie", "Telugu", "2026-11-27", "UnFormula Films", "Anil Sayyapureddy, Ajay", "tt37454145", "TMDB"))
+        self.assertEqual(t.source_urls, ["https://www.themoviedb.org/movie/1504630", "https://www.imdb.com/title/tt37454145/"])
+
+    def test_imdb_403_switches_to_tmdb(self):
+        class Blocked(FakeSession):
+            def post(self, url, *a, **k):
+                if "imdb" in url:
+                    return FakeResponse({}, "Forbidden", status_code=403)
+                return FakeResponse({"data": {}})
+
+        class H(FakeHttp):
+            session = Blocked()
+
+        svc = IndianReleaseTrackerService(H(), tmdb_api_key="k")
+        junk = {"id": 9, "title": "Fan Edit", "original_language": "te", "release_date": "2026-11-20", "credits": {}}
+
+        def fake_tmdb(path, params=None):
+            if path == "/discover/movie":
+                return {"total_pages": 1, "results": [{"id": 1504630, "original_language": "te"}, {"id": 9, "original_language": "te"}]}
+            if path == "/movie/1504630":
+                return TMDB_MYSAA
+            if path == "/movie/9":
+                return junk
+            return {}
+        svc._tmdb = fake_tmdb
+        snap = svc.run(mode="2", languages=["Telugu"], include_tv=False, youtube_scope="none", check_cbfc=False, today=TODAY)
+        rows = snap["sections"][0]["rows"]
+        self.assertIn("Mysaa", [r["Title Name"] for r in rows])
+        self.assertNotIn("Fan Edit", [r["Title Name"] for r in rows])            # no IMDb ID / company -> dropped
+        mysaa = next(r for r in rows if r["Title Name"] == "Mysaa")
+        self.assertEqual((mysaa["Release Date"], mysaa["Language"], mysaa["Studio"]), ("27 Nov 2026", "Telugu", "UnFormula Films"))
+        self.assertIn("HTTP 403", snap["summary"])
+
+
 class DiagnosticsTests(unittest.TestCase):
     def test_reports_every_source_without_raising(self):
         checks = IndianReleaseTrackerService(FakeHttp()).diagnose()
-        self.assertEqual(len(checks), 11)                                # 10 data sources + Sacnilk
+        self.assertEqual(len(checks), 13)                                # 12 data sources + Sacnilk
         by = {c["source"]: c["status"] for c in checks}
         self.assertEqual(by["TMDB API"], "SKIPPED")                   # no key in tests
         self.assertEqual(by["YouTube results page"], "OK")
