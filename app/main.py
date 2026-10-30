@@ -52,7 +52,7 @@ youtube_release_verifier_service = YouTubeReleaseVerifierService(http_client, se
 # YouTube top-3 channels, CBFC website). See app/services/indian_release_tracker.py.
 indian_release_tracker_service = IndianReleaseTrackerService(
     http_client, settings.youtube_api_key, settings.tmdb_api_key,
-    settings.tmdb_read_access_token, settings.omdb_api_key)
+    settings.tmdb_read_access_token, settings.omdb_api_key, imdb_service)
 # Straight scrape of the newest MovieInsider trailer listing pages (first two by
 # default) exported as Excel/CSV. No YouTube API, no channel validation.
 movie_trailer_feed_service = MovieTrailerFeedService(http_client)
@@ -166,7 +166,7 @@ def indian_release_tracker_diagnostics() -> dict:
     """Self-test: which sources can THIS deployment reach (IMDb, TMDB, OMDb, YouTube, ...)."""
     svc = IndianReleaseTrackerService(
         http_client, settings.youtube_api_key, settings.tmdb_api_key,
-        settings.tmdb_read_access_token, settings.omdb_api_key)
+        settings.tmdb_read_access_token, settings.omdb_api_key, imdb_service)
     checks = svc.diagnose()
     return {"checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "ok": sum(c["status"] == "OK" for c in checks), "total": len(checks), "checks": checks}
@@ -187,7 +187,7 @@ async def start_indian_release_tracker(request: Request, bulk_file: UploadFile |
         "indian_release_tracker",
         lambda progress: IndianReleaseTrackerService(
             http_client, settings.youtube_api_key, settings.tmdb_api_key,
-            settings.tmdb_read_access_token, settings.omdb_api_key).run(
+            settings.tmdb_read_access_token, settings.omdb_api_key, imdb_service).run(
             mode=mode,
             custom_start=str(form.get("custom_start") or ""),
             custom_end=str(form.get("custom_end") or ""),
