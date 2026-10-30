@@ -132,6 +132,20 @@ class CbfcTests(unittest.TestCase):
         self.assertEqual(recs[0]["category"], "UA 13+")
 
 
+IMDB_TV = {
+    "id": "tt29625288", "titleText": {"text": "Akka"}, "titleType": {"id": "tvSeries"},
+    "releaseDate": {"day": 30, "month": 10, "year": 2026}, "genres": {"genres": [{"text": "Crime"}, {"text": "Drama"}]},
+    "spokenLanguages": {"spokenLanguages": [{"text": "Hindi"}]}, "countriesOfOrigin": {"countries": [{"id": "IN"}]},
+    "directors": {"edges": [{"node": {"name": {"nameText": {"text": "Dharmaraj Shetty"}}}}]},
+    "cast": {"edges": [{"node": {"name": {"nameText": {"text": "Keerthy Suresh"}}}}]},
+    "producers": {"edges": [{"node": {"name": {"nameText": {"text": "Aditya Chopra"}}}}]},
+    "prod": {"edges": [{"node": {"company": {"companyText": {"text": "YRF Entertainment"}}}}]},
+    "dist": {"edges": [{"node": {"company": {"companyText": {"text": "Netflix"}}}},
+                       {"node": {"company": {"companyText": {"text": "Some Theatre Chain"}}}}]},
+    "runtime": None, "certificate": None,
+}
+
+
 class FakeResponse:
     def __init__(self, payload=None, text=""):
         self.payload, self.text = payload, text
@@ -157,7 +171,13 @@ class FakeSession:
         return FakeResponse({}, "")
 
     def post(self, *a, **k):
-        return FakeResponse({"data": {"titles": []}})
+        variables = (k.get("json") or {}).get("variables") or {}
+        if variables.get("types") == ["tvSeries", "tvMiniSeries"]:
+            return FakeResponse({"data": {"advancedTitleSearch": {"total": 1, "pageInfo": {"hasNextPage": False}, "edges": [
+                {"node": {"title": IMDB_TV}}]}}})
+        if variables.get("types") == ["movie", "tvMovie"]:
+            return FakeResponse({"data": {"advancedTitleSearch": {"total": 0, "pageInfo": {"hasNextPage": False}, "edges": []}}})
+        return FakeResponse({"data": {}})
 
 
 class FakeHttp:
@@ -172,14 +192,72 @@ class FakeHttp:
         raise RuntimeError("blocked")
 
 
+class ImdbAdvancedSearchTests(unittest.TestCase):
+    def test_title_mapping(self):
+        t = IndianReleaseTrackerService._imdb_title(IMDB_TV, "TV Show", {"hindi"}, TODAY)
+        self.assertEqual((t.category, t.network, t.studio, t.produced_by), ("TV Show", "Netflix", "YRF Entertainment", "Aditya Chopra"))
+        self.assertEqual((t.sort_date, t.status, t.type_platform), ("2026-10-30", "Tentative", "TV series – OTT (Netflix)"))
+        self.assertIsNone(IndianReleaseTrackerService._imdb_title(IMDB_TV, "TV Show", {"tamil"}, TODAY))   # unticked language
+
+
+class TmdbTests(unittest.TestCase):
+    def test_apply_fills_only_gaps(self):
+        svc = IndianReleaseTrackerService(FakeHttp(), tmdb_read_access_token="x")
+        svc._tmdb = lambda path, params=None: {
+            "external_ids": {"imdb_id": "tt999"}, "genres": [{"name": "Drama"}],
+            "credits": {"crew": [{"job": "Director", "name": "A Director"}], "cast": [{"name": "Lead"}]},
+            "production_companies": [{"name": "Studio X"}], "networks": [],
+            "watch/providers": {"results": {"IN": {"flatrate": [{"provider_name": "Prime Video"}]}}},
+            "original_language": "ta", "release_date": "2026-12-04"}
+        t = Title("Kara", director="Keep Me")
+        svc._apply_tmdb(t, "movie", 1)
+        self.assertEqual((t.imdb_id, t.genre, t.director, t.studio, t.network, t.language, t.sort_date),
+                         ("tt999", "Drama", "Keep Me", "Studio X", "Prime Video", "Tamil", "2026-12-04"))
+
+
+class IngestExportTests(unittest.TestCase):
+    def test_profiles_and_sections(self):
+        from app.services.ingest_export import build_ingest_csv, ingest_category_for_tracker, profile_for
+        from app.services.exporting import ExportService
+        self.assertEqual(ingest_category_for_tracker("indian_release_tracker_movies"), "Movies")
+        self.assertEqual(ingest_category_for_tracker("indian_release_tracker_tv"), "TV Shows")
+        row = Title("Akka", category="TV Show", imdb_id="tt29625288", release_date="30 Oct 2026",
+                    network="Netflix, JioHotstar", language="Hindi", genre="Crime / Drama").row()
+        csv_text = build_ingest_csv([row], profile_for("indian-release-tv")).decode()
+        self.assertIn("https://www.imdb.com/title/tt29625288", csv_text)
+        self.assertIn("2026-10-30", csv_text)
+        self.assertIn("Netflix", csv_text)
+        self.assertNotIn("JioHotstar", csv_text)
+        snap = IndianReleaseTrackerService(FakeHttp()).run(mode="2", languages=["Hindi", "Telugu"],
+                                                           youtube_scope="none", check_cbfc=False, today=TODAY)
+        snap = ExportService(60).register_snapshot_exports(snap)
+        self.assertEqual([s["ingest_category"] for s in snap["sections"]], ["Movies", "TV Shows"])
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def test_reports_every_source_without_raising(self):
+        checks = IndianReleaseTrackerService(FakeHttp()).diagnose()
+        self.assertEqual(len(checks), 8)
+        by = {c["source"]: c["status"] for c in checks}
+        self.assertEqual(by["TMDB API"], "SKIPPED")                   # no key in tests
+        self.assertEqual(by["YouTube results page"], "OK")
+        self.assertEqual(by["CBFC website"], "BLOCKED / FAILED")
+
+
 class EndToEndTests(unittest.TestCase):
     def test_mode2_and_mode4(self):
         svc = IndianReleaseTrackerService(FakeHttp())
         snap = svc.run(mode="2", languages=["Telugu"], include_tv=False, youtube_scope="none", today=TODAY)
+        self.assertEqual([s["key"] for s in snap["sections"]], ["movies", "tv_shows"])
         titles = [r["Title Name"] for r in snap["sections"][0]["rows"]]
         self.assertEqual(titles, ["Aakasamlo Oka Tara"])           # only 01 Oct 2026 -> 29 Jan 2027
         self.assertEqual(snap["sections"][0]["columns"], TITLE_COLUMNS)
         self.assertIn("CBFC", snap["summary"])                      # CBFC blocked -> noted, not fatal
+
+        snap = IndianReleaseTrackerService(FakeHttp()).run(mode="2", languages=["Hindi"], youtube_scope="none",
+                                                           check_cbfc=False, today=TODAY)
+        tv = snap["sections"][1]["rows"]
+        self.assertEqual([(r["Title Name"], r["Network"], r["IMDb ID"]) for r in tv], [("Akka", "Netflix", "tt29625288")])
 
         snap = IndianReleaseTrackerService(FakeHttp()).run(
             mode="4", bulk_text="Deep Jele Jai | Bengali | 1959 | tt0321968", check_cbfc=False, today=TODAY)
