@@ -234,7 +234,7 @@ class IngestExportTests(unittest.TestCase):
         snap = IndianReleaseTrackerService(FakeHttp()).run(mode="2", languages=["Hindi", "Telugu"],
                                                            youtube_scope="none", check_cbfc=False, today=TODAY)
         snap = ExportService(60).register_snapshot_exports(snap)
-        self.assertEqual([s["ingest_category"] for s in snap["sections"]], ["Movies", "TV Shows"])
+        self.assertEqual([s.get("ingest_category", "") for s in snap["sections"]], ["", "Movies", "TV Shows"])
 
 
 SACNILK_PAGE = """
@@ -404,7 +404,7 @@ class TmdbFallbackTests(unittest.TestCase):
             return {}
         svc._tmdb = fake_tmdb
         snap = svc.run(mode="2", languages=["Telugu"], include_tv=False, youtube_scope="none", check_cbfc=False, today=TODAY)
-        rows = snap["sections"][0]["rows"]
+        rows = snap["sections"][1]["rows"]
         self.assertIn("Mysaa", [r["Title Name"] for r in rows])
         self.assertNotIn("Fan Edit", [r["Title Name"] for r in rows])            # no IMDb ID / company -> dropped
         mysaa = next(r for r in rows if r["Title Name"] == "Mysaa")
@@ -426,23 +426,25 @@ class EndToEndTests(unittest.TestCase):
     def test_mode2_and_mode4(self):
         svc = IndianReleaseTrackerService(FakeHttp())
         snap = svc.run(mode="2", languages=["Telugu"], include_tv=False, youtube_scope="none", today=TODAY)
-        self.assertEqual([s["key"] for s in snap["sections"]], ["movies", "tv_shows"])
-        titles = [r["Title Name"] for r in snap["sections"][0]["rows"]]
+        self.assertEqual([s["key"] for s in snap["sections"]], ["all_titles", "movies", "tv_shows"])
+        titles = [r["Title Name"] for r in snap["sections"][1]["rows"]]
+        self.assertEqual([r["Category"] for r in snap["sections"][0]["rows"]], ["Movie"])
         self.assertEqual(titles, ["Aakasamlo Oka Tara"])           # only 01 Oct 2026 -> 31 Dec 2026
         self.assertEqual(snap["sections"][0]["columns"], TITLE_COLUMNS)
         self.assertIn("CBFC", snap["summary"])                      # CBFC blocked -> noted, not fatal
 
         snap = IndianReleaseTrackerService(FakeHttp()).run(mode="2", languages=["Hindi"], youtube_scope="none",
                                                            check_cbfc=False, today=TODAY)
-        tv = snap["sections"][1]["rows"]
+        tv = snap["sections"][2]["rows"]
+        self.assertEqual([r["Category"] for r in snap["sections"][0]["rows"]], ["TV Show"])   # all-titles table includes TV
         self.assertEqual([(r["Title Name"], r["Network"], r["IMDb ID"]) for r in tv], [("Akka", "Netflix", "tt29625288")])
 
         snap = IndianReleaseTrackerService(FakeHttp()).run(
             mode="4", bulk_text="Deep Jele Jai | Bengali | 1959 | tt0321968", check_cbfc=False, today=TODAY)
-        row = snap["sections"][0]["rows"][0]
+        row = snap["sections"][1]["rows"][0]
         self.assertEqual((row["IMDb ID"], row["Studio"], row["Origin"]), ("tt0321968", "Angel Digital", "Indian"))
         self.assertTrue(row["Top 3 YouTube Channels"].startswith("https://www.youtube.com/@KLiKKjokhontokhon|Deep Jele Jai"))
-        self.assertEqual(snap["sections"][1]["columns"], COVERAGE_COLUMNS)
+        self.assertEqual(snap["sections"][-1]["columns"], COVERAGE_COLUMNS)
 
     def test_mode4_needs_list(self):
         with self.assertRaises(ValueError):
