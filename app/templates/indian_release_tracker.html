@@ -124,6 +124,32 @@
   </form>
 </section>
 
+<section class="app-panel" aria-label="Source coverage">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">Source coverage</p>
+      <h2>Where the data comes from</h2>
+    </div>
+    <p>Every run reads these live. <a href="/indian-release-tracker/diagnostics" target="_blank" rel="noopener">Run the source self-test</a> to see which ones this server can reach right now.</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Source</th><th>How it is used</th></tr></thead>
+      <tbody>
+        <tr><td><a href="https://www.imdb.com/search/title/?countries=IN" target="_blank" rel="noopener">IMDb Advanced Search</a> · <a href="https://www.imdb.com/calendar/?region=IN&type=MOVIE" target="_blank" rel="noopener">IMDb India calendar</a></td><td>Data source – every India-origin movie, TV movie, series and mini-series in the window (the calendar's Indian titles are a subset of this)</td></tr>
+        <tr><td><a href="https://www.imdb.com/list/ls548141776/" target="_blank" rel="noopener">IMDb list ls548141776</a></td><td>Data source – Most Anticipated Indian Movies</td></tr>
+        <tr><td><a href="https://en.wikipedia.org/wiki/List_of_Indian_films" target="_blank" rel="noopener">Wikipedia – List of Indian films</a> (year pages per language, e.g. <a href="https://en.wikipedia.org/wiki/List_of_Hindi_films_of_2027" target="_blank" rel="noopener">Hindi 2027</a>) · Netflix India / Amazon India / Disney+ Hotstar originals lists</td><td>Data source</td></tr>
+        <tr><td><a href="https://query.wikidata.org/" target="_blank" rel="noopener">Wikidata</a> · TMDB · OMDb</td><td>Data source / enrichment – IMDb IDs, genre, director, cast, Studio, Network</td></tr>
+        <tr><td><a href="https://www.justwatch.com/in" target="_blank" rel="noopener">JustWatch India</a> (incl. <a href="https://www.justwatch.com/in/provider/amazon-prime-video/new" target="_blank" rel="noopener">Prime Video new</a>, <a href="https://www.justwatch.com/in/provider/amazon-video/new" target="_blank" rel="noopener">Amazon Video new</a>)</td><td>Data source – upcoming and newly added Indian titles on Netflix, Prime Video, Amazon Video, JioHotstar, ZEE5, Sony LIV, Sun NXT, aha, hoichoi, ManoramaMAX, MX Player, Chaupal, Hungama, ShemarooMe, BookMyShow Stream, EPIC ON</td></tr>
+        <tr><td>Sacnilk · BoxOfficeIndia24 · OTTDrop · OTTweek · OTT Movie Releases · Binged · Filmibeat · 91mobiles · District · BookMyShow · What's on Netflix · About Amazon India</td><td>Listing pages – parsed every run (tables and date/title cards); counts per site appear in the run summary</td></tr>
+        <tr><td>YouTube · CBFC website</td><td>Trailer + Top 3 channels · certificates</td></tr>
+        <tr><td>Netflix · Prime Video · JioHotstar · ZEE5 · Sony LIV · Sun NXT · aha · hoichoi · Chaupal · ManoramaMAX · MX Player</td><td>Covered through JustWatch India (their own sites are login/app-only)</td></tr>
+        <tr><td><a href="https://planetmarathi.org/" target="_blank" rel="noopener">Planet Marathi</a> · <a href="https://nokioapp.com/" target="_blank" rel="noopener">Nokio</a> · <a href="https://www.ormaxmedia.com/" target="_blank" rel="noopener">Ormax</a> · <a href="https://www.barcindia.co.in/" target="_blank" rel="noopener">BARC</a> · <a href="https://www.tellychakkar.com/" target="_blank" rel="noopener">Tellychakkar</a> · <a href="https://www.etvbharat.com/en/!entertainment" target="_blank" rel="noopener">ETV Bharat</a> · <a href="https://varietyindia.com" target="_blank" rel="noopener">Variety India</a></td><td>Reference / manual check – no machine-readable title list (app-only, reports, ratings or news articles)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
 <section id="workspace" class="workspace workspace-empty">
   <h2>Ready to build the tracker</h2>
   <p>Results come as two tables &mdash; Movies and TV Shows &mdash; with release status, Studio, Network, trailer and Top 3 YouTube channels, plus a Source Coverage table when you upload a list. Each table downloads as CSV, Excel, Google Sheets or a BDR ingest template.</p>
