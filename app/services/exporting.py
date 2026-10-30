@@ -38,11 +38,21 @@ class ExportService:
         except Exception:  # never let this break an export
             snapshot["ingest_category"] = ""
         for section in snapshot.get("sections", []):
+            # A tool whose sections are different title categories (e.g. Movies
+            # and TV Shows) sets a per-section tracker_type, so each section gets
+            # the right ingest template; other tools inherit the run's.
+            section_tracker = section.get("tracker_type") or snapshot["tracker_type"]
+            if section.get("tracker_type"):
+                try:
+                    from app.services.ingest_export import ingest_category_for_tracker
+                    section["ingest_category"] = ingest_category_for_tracker(section_tracker)
+                except Exception:
+                    section["ingest_category"] = ""
             payload = ExportPayload(
                 title=section["title"],
                 columns=section["columns"],
                 rows=section["rows"],
-                tracker_type=snapshot["tracker_type"],
+                tracker_type=section_tracker,
                 section_key=section["key"],
                 supports_google=bool(section.get("supports_google")),
             )
