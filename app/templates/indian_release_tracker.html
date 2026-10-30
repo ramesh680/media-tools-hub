@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero-grid">
+  <article class="hero-card">
+    <p class="eyebrow">India · Regional Languages</p>
+    <h1>Indian Regional Release Tracker</h1>
+    <p>Movies and TV shows in Hindi, Tamil, Telugu, Malayalam, Kannada, Marathi, Bengali, Gujarati, Punjabi, Odia, Bhojpuri, Assamese and Tulu &mdash; released, CBFC-certified and upcoming &mdash; with IMDb ID, release status, Studio, Network, director, cast, trailer and the Top 3 YouTube channels (<code>channel URL|Title</code>). Or enrich only your own title list.</p>
+  </article>
+
+  <aside class="tracking-card" aria-label="Sources">
+    <p class="eyebrow">Sources, read live on every run</p>
+    <ul>
+      <li><strong>Wikipedia:</strong> "List of &lt;Language&gt; films of &lt;Year&gt;" + OTT originals lists</li>
+      <li><strong>IMDb:</strong> India release calendar (best effort)</li>
+      <li><strong>Wikidata:</strong> IMDb IDs, Studio, Network for uploaded titles</li>
+      <li><strong>YouTube:</strong> trailer link + Top 3 channels (trailer · full movie · songs)</li>
+      <li><strong>CBFC:</strong> official website certificates (best effort &mdash; the site blocks many servers)</li>
+      <li><strong>Exports:</strong> CSV, Excel, Google Sheets</li>
+    </ul>
+  </aside>
+</section>
+
+<section class="app-panel" aria-label="Indian release tracker panel">
+  <div class="panel-heading">
+    <div>
+      <p class="eyebrow">Run options</p>
+      <h2>What should this run cover?</h2>
+    </div>
+    <p>Today: {{ today_iso }}. {% if youtube_api_enabled %}YouTube API fallback key is configured.{% else %}Optional: paste a YouTube API key for the fallback.{% endif %}</p>
+  </div>
+
+  <form class="validator-form" hx-post="/indian-release-tracker/start" hx-target="#workspace" hx-swap="outerHTML" enctype="multipart/form-data">
+    <fieldset class="date-controls">
+      <legend>Run mode</legend>
+      <div class="range-options" role="radiogroup" aria-label="Run mode">
+        <label class="range-option">
+          <input type="radio" name="mode" value="1">
+          <span>1 · 2024 → one year ahead</span>
+        </label>
+        <label class="range-option">
+          <input type="radio" name="mode" value="2" checked>
+          <span>2 · Next 3 months</span>
+        </label>
+        <label class="range-option">
+          <input type="radio" name="mode" value="3">
+          <span>3 · Next 6 months</span>
+        </label>
+        <label class="range-option">
+          <input type="radio" name="mode" value="4">
+          <span>4 · Only my title list</span>
+        </label>
+        <label class="range-option">
+          <input type="radio" name="mode" value="5">
+          <span>5 · Custom</span>
+        </label>
+      </div>
+      <p class="validator-form-note">
+        1 = 01 Jan 2024 → {{ next_year_iso }} (plus announced "Date TBA" titles) · 2 / 3 = from the 1st of this month to today + 3 / 6 months ·
+        4 = only the titles you upload or paste (any year, any country), in the same columns · 5 = the custom dates, languages and notes below.
+        Option 1 reads ~50 Wikipedia pages and is the slowest run.
+      </p>
+      <div class="custom-date-row">
+        <label><span>Custom start (option 5)</span><input type="date" name="custom_start" value="{{ today_iso }}"></label>
+        <label><span>Custom end (option 5)</span><input type="date" name="custom_end" value="{{ next_year_iso }}"></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="date-controls">
+      <legend>Languages (options 1, 2, 3, 5)</legend>
+      <div class="range-options" aria-label="Languages">
+        {% for lang in languages %}
+        <label class="range-option">
+          <input type="checkbox" name="languages" value="{{ lang }}" checked>
+          <span>{{ lang }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <div class="validator-source-grid">
+      <label class="field-control">
+        <span>Title list for option 4 (.csv, .xlsx) &mdash; optional for 1/2/3/5 (its titles are always kept)</span>
+        <input type="file" name="bulk_file" accept=".csv,.xlsx,.xlsm">
+      </label>
+      <div class="field-control">
+        <span>Accepted columns / pasted format</span>
+        <p class="validator-form-note">Columns such as IMDb ID, Title, Content Type, Language, Release Date, Pay1/Library (e.g. a Prime Video catalogue export). Pasted lines: Title | Language | Release date or year | IMDb ID.</p>
+      </div>
+    </div>
+
+    <label class="field-control rules-control">
+      <span>Paste titles (option 4)</span>
+      <textarea name="bulk_text" spellcheck="false" placeholder="Deep Jele Jai | Bengali | 1959 | tt0321968&#10;Kantara: Chapter 1 | Kannada | 2025"></textarea>
+    </label>
+
+    <div class="validator-source-grid">
+      <label class="field-control">
+        <span>Top 3 YouTube channels for</span>
+        <select name="youtube_scope">
+          <option value="recent" selected>Listed titles + last 90 days + upcoming (recommended)</option>
+          <option value="all">Every title (slow; capped at 600)</option>
+          <option value="none">Skip YouTube</option>
+        </select>
+      </label>
+      <label class="field-control">
+        <span>YouTube API key (optional fallback{% if youtube_api_enabled %}, configured key used if blank{% endif %})</span>
+        <input type="password" name="youtube_api_key" autocomplete="off" placeholder="Only used if YouTube blocks the results page">
+      </label>
+    </div>
+
+    <div class="range-options">
+      <label class="range-option"><input type="checkbox" name="include_tv" checked><span>Include TV shows (OTT originals)</span></label>
+      <label class="range-option"><input type="checkbox" name="check_cbfc" checked><span>Check CBFC website certificates</span></label>
+    </div>
+
+    <label class="field-control rules-control">
+      <span>Comments / custom requirements (option 5)</span>
+      <textarea name="notes" spellcheck="false" placeholder="e.g. Telugu and Tamil only, Movies only, Jan–Mar 2027"></textarea>
+    </label>
+
+    <button class="primary-button validator-submit-button" type="submit">Build Indian Release Tracker</button>
+  </form>
+</section>
+
+<section id="workspace" class="workspace workspace-empty">
+  <h2>Ready to build the tracker</h2>
+  <p>Results show every title with its release status, Studio, Network, trailer and Top 3 YouTube channels, plus a Source Coverage table when you upload a list. Download as CSV, Excel or Google Sheets.</p>
+</section>
+
+{% include "partials/history_table.html" %}
+{% endblock %}
