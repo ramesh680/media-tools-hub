@@ -13,7 +13,7 @@ import json
 import unittest
 
 from app.services.indian_release_tracker import (
-    parse_listing_date, parse_listing_page,
+    parse_listing_date, parse_listing_page, channel_matches, pick_official_channels, published_year, imdb_release,
     COVERAGE_COLUMNS, TITLE_COLUMNS, IndianReleaseTrackerService, Title, filter_window,
     merge_titles, parse_cbfc_results, parse_film_year_page, parse_tv_list_page,
     parse_youtube_results, pick_top3, read_title_list, resolve_window,
@@ -269,10 +269,102 @@ class ListingAndJustWatchTests(unittest.TestCase):
         self.assertIsNone(IndianReleaseTrackerService._jw_title(edge, TODAY, TODAY))   # not Indian
 
 
+# Real data captured 30 Oct 2026: IMDb GraphQL (credits) and YouTube results for "Mysaa 2026 official trailer"
+# and "Akka 2026 Netflix official trailer" (channel name, handle, upload age, verified badge).
+MYSAA_YT = [("Rta_M2zkpWk", "MYSAA Teaser (Hindi) | Rashmika | Rawindra Pulle | Jakes Bejoy", "T-Series", "/@tseries", "1mo ago", True),
+            ("9kkl0O-CT3M", "MYSAA Trailer (2026) | Rashmika Mandanna | Concept Trailer", "T-TRAILER F.M.C", "/@T-Trailerfanmadeconcept", "1 min ago", False),
+            ("SORZsU6Ytp4", "MYSAA Teaser (Telugu) | Rashmika | Rawindra Pulle", "T-Series Telugu", "/@TseriesTelugu", "1mo ago", True),
+            ("iGyHorKWoos", "#MYSAA - Official Trailer | Rashmika Mandanna | Jakes Bejoy", "Bollywood Studios", "/@Bollywood_Studios", "1mo ago", False),
+            ("tWeEGhoWoBQ", "MYSAA Pre Teaser | Rashmika | Rawindra Pulle | Jakes Bejoy | UnFormula", "UnFormula Films", "/@UnFormulaFilms", "1mo ago", False),
+            ("1KIMI1Zhj0k", "Mysaa Trailer (2026) The Warrior Rises | Rashmika Mandanna", "S-Series Studio", "/@studiomovies-l6q", "1mo ago", False),
+            ("DILtUVRVXQU", "Ranabaali Official Trailer (Hindi) | Vijay Deverakonda | Rashmika", "RKD Studios", "/@rkddigital", "3w ago", True)]
+AKKA_YT = [("f6ga0g_-OVk", "Akka | Official Trailer | Keerthy Suresh, Radhika Apte | Netflix India", "Netflix India", "/@NetflixIndiaOfficial", "8d ago", True),
+           ("NwJhml1_D54", "Akka | Official Teaser | Keerthy Suresh, Radhika Apte | Netflix India", "YRF", "/@yrf", "11d ago", True),
+           ("5mSTPoUvefo", "Akka Official Trailer | Keerthy Suresh, Radhika Apte | Netflix India", "Movie Time Zone", "/@MovieTimeZone", "7d ago", False),
+           ("aDlZ2MXxP5c", "Akka - Teaser Trailer | Netflix | Keerthy Suresh | Radhika Apte", "MTK Movies", "/@MTKMovies0", "2w ago", False)]
+IMDB_MYSAA = {"id": "tt37454145", "titleText": {"text": "Mysaa"}, "titleType": {"id": "movie"},
+              "releaseDate": {"day": 27, "month": 11, "year": 2026},
+              "inDate": {"edges": [{"node": {"day": None, "month": 10, "year": 2026}}, {"node": {"day": 27, "month": 11, "year": 2026}}]},
+              "spokenLanguages": {"spokenLanguages": [{"text": "Telugu"}, {"text": "Hindi"}, {"text": "Tamil"}]},
+              "countriesOfOrigin": {"countries": [{"id": "IN"}]}, "genres": {"genres": [{"text": "Action"}]},
+              "directors": {"edges": [{"node": {"name": {"nameText": {"text": "Rawindra Pulle"}}}}]},
+              "cast": {"edges": [{"node": {"name": {"nameText": {"text": n}}}} for n in ["Rashmika Mandanna", "Samuthirakani", "Easwari Rao"]]},
+              "producers": {"edges": [{"node": {"name": {"nameText": {"text": n}}}} for n in ["Samardhi Bujji Babu", "Ajay Saipureddy"]]},
+              "prod": {"edges": [{"node": {"company": {"companyText": {"text": n}}}} for n in ["Haashtag Media", "UnFormula Films"]]},
+              "dist": {"edges": []}}
+
+
+def yt(rows):
+    return [{"id": i, "t": t, "name": n, "ch": "https://www.youtube.com" + h, "pub": p, "ver": v} for i, t, n, h, p, v in rows]
+
+
+class OfficialChannelTests(unittest.TestCase):
+    def test_matching(self):
+        self.assertTrue(channel_matches("T-Series Telugu", "T-Series"))
+        self.assertTrue(channel_matches("YRF", "Yash Raj Films"))
+        self.assertTrue(channel_matches("Netflix India", "Netflix India"))
+        self.assertTrue(channel_matches("UnFormula Films", "UnFormula Films"))
+        self.assertFalse(channel_matches("S-Series Studio", "T-Series"))
+        self.assertFalse(channel_matches("Bollywood Studios", "UnFormula Films"))
+        self.assertEqual(published_year("1mo ago", TODAY), 2026)
+        self.assertEqual(published_year("3 years ago", TODAY), 2023)
+
+    def test_mysaa_only_credited_channels(self):
+        t = IndianReleaseTrackerService._imdb_title(IMDB_MYSAA, "Movie", set(), TODAY)
+        self.assertEqual((t.sort_date, t.language, t.studio, t.produced_by),
+                         ("2026-11-27", "Telugu", "Haashtag Media, UnFormula Films", "Samardhi Bujji Babu, Ajay Saipureddy"))
+        trailer, chans = pick_official_channels(t, [yt(MYSAA_YT)], TODAY)
+        self.assertEqual(chans, [("https://www.youtube.com/@UnFormulaFilms", "studio"),
+                                 ("https://www.youtube.com/@tseries", "music"),
+                                 ("https://www.youtube.com/@TseriesTelugu", "music")])
+        self.assertEqual(trailer, "https://www.youtube.com/watch?v=tWeEGhoWoBQ")
+
+    def test_akka_series(self):
+        t = IndianReleaseTrackerService._imdb_title(IMDB_TV, "Movie", set(), TODAY)
+        self.assertEqual(t.category, "TV Show")                         # IMDb title type wins
+        t.credits["studio"] = ["YRF Entertainment", "Yash Raj Films"]
+        t.credits["distributor"] = ["Netflix India"]
+        _, chans = pick_official_channels(t, [yt(AKKA_YT)], TODAY)
+        self.assertEqual(chans, [("https://www.youtube.com/@yrf", "studio"),
+                                 ("https://www.youtube.com/@NetflixIndiaOfficial", "distributor")])
+
+    def test_old_upload_rejected_for_new_title(self):
+        t = IndianReleaseTrackerService._imdb_title(IMDB_MYSAA, "Movie", set(), TODAY)
+        old = [("x1", "MYSAA Official Trailer", "UnFormula Films", "/@UnFormulaFilms", "6 years ago", False)]
+        self.assertEqual(pick_official_channels(t, [yt(old)], TODAY)[1], [])
+
+
+class ValidationTests(unittest.TestCase):
+    def test_justwatch_library_addition_keeps_original_year(self):
+        edge = {"newOffer": {"package": {"clearName": "Netflix"}}, "node": {"__typename": "Movie", "objectType": "MOVIE",
+                "content": {"title": "Old Film", "fullPath": "/in/movie/old-film", "originalReleaseDate": "2021-03-05",
+                            "productionCountries": ["IN"], "externalIds": {"imdbId": "tt1"}}}}
+        t = IndianReleaseTrackerService._jw_title(edge, date(2026, 10, 20), TODAY)
+        self.assertEqual((t.sort_date, t.status), ("2021-03-05", "Released"))
+        self.assertIn("on OTT 20 Oct 2026", t.type_platform)
+        self.assertEqual(t.source_urls, ["https://www.justwatch.com/in/movie/old-film"])
+        self.assertEqual(filter_window([t], date(2026, 10, 1), date(2027, 1, 29), False, False), [])
+
+    def test_imdb_corrects_and_rejects(self):
+        class H(FakeHttp):
+            pass
+        svc = IndianReleaseTrackerService(H())
+        svc.http.session = type("S", (), {"post": lambda self, *a, **k: FakeResponse({"data": {"titles": [IMDB_MYSAA, IMDB_TV]}})})()
+        same = Title("Mysaa", language="Telugu", sort_date="2026-10-01", imdb_id="tt37454145")
+        clash = Title("Akka", language="Tamil", sort_date="2026-10-30", imdb_id="tt29625288")     # IMDb says Hindi
+        svc._imdb_validate([same, clash], TODAY, lambda p, m: None)
+        self.assertEqual((same.sort_date, same.validated, same.produced_by), ("2026-11-27", "IMDb", "Samardhi Bujji Babu, Ajay Saipureddy"))
+        self.assertIn("https://www.imdb.com/title/tt37454145/", same.source_urls)
+        self.assertEqual(clash.imdb_id, "")                                                        # wrong match removed
+
+    def test_india_release_date_preferred(self):
+        self.assertEqual(imdb_release(IMDB_MYSAA)[1], "27 Nov 2026")
+
+
 class DiagnosticsTests(unittest.TestCase):
     def test_reports_every_source_without_raising(self):
         checks = IndianReleaseTrackerService(FakeHttp()).diagnose()
-        self.assertEqual(len(checks), 22)                                # 10 data sources + 12 listing pages
+        self.assertEqual(len(checks), 11)                                # 10 data sources + Sacnilk
         by = {c["source"]: c["status"] for c in checks}
         self.assertEqual(by["TMDB API"], "SKIPPED")                   # no key in tests
         self.assertEqual(by["YouTube results page"], "OK")
