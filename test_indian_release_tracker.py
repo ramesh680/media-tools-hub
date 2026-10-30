@@ -103,7 +103,7 @@ class YouTubeTests(unittest.TestCase):
                                  "https://www.youtube.com/@BengaliMoviesAngelDigital",
                                  "https://www.youtube.com/@angelsongs"])
         row = Title("Deep Jele Jai", youtube_channels=chans).row()
-        self.assertEqual(row["Top 3 YouTube Channels"].split("\n")[0],
+        self.assertEqual(row["Top YouTube Channels"].split("\n")[0],
                          "https://www.youtube.com/@KLiKKjokhontokhon|Deep Jele Jai")
 
     def test_blocked_page(self):
@@ -175,10 +175,10 @@ class FakeSession:
 
     def post(self, *a, **k):
         variables = (k.get("json") or {}).get("variables") or {}
-        if variables.get("types") == ["tvSeries", "tvMiniSeries"]:
+        if "tvSeries" in (variables.get("types") or []):
             return FakeResponse({"data": {"advancedTitleSearch": {"total": 1, "pageInfo": {"hasNextPage": False}, "edges": [
                 {"node": {"title": IMDB_TV}}]}}})
-        if variables.get("types") == ["movie", "tvMovie"]:
+        if "movie" in (variables.get("types") or []):
             return FakeResponse({"data": {"advancedTitleSearch": {"total": 0, "pageInfo": {"hasNextPage": False}, "edges": []}}})
         return FakeResponse({"data": {}})
 
@@ -412,10 +412,75 @@ class TmdbFallbackTests(unittest.TestCase):
         self.assertIn("HTTP 403", snap["summary"])
 
 
+class RuleLanguageAndStudioChannelTests(unittest.TestCase):
+    def test_imdb_rule_url_and_types(self):
+        from app.services.indian_release_tracker import imdb_rule_url, imdb_rule_kinds
+        self.assertEqual(imdb_rule_url(date(2026, 10, 1), date(2026, 12, 31)),
+                         "https://www.imdb.com/search/title/?title_type=feature,tv_series&release_date=2026-10-01,2026-12-31&countries=IN")
+        self.assertEqual(imdb_rule_kinds(), [("Movie", ["movie"]), ("TV Show", ["tvSeries"])])
+        self.assertEqual(imdb_rule_kinds("feature,tv_series,tv_miniseries"), [("Movie", ["movie"]), ("TV Show", ["tvSeries", "tvMiniSeries"])])
+
+    def test_state_languages(self):
+        from app.services.indian_release_tracker import INDIAN_LANGUAGES, LANGUAGE_ALIASES, LANG_CODES
+        for lang in ("Rajasthani", "Haryanvi", "Garhwali", "Kumaoni", "Chhattisgarhi", "Konkani", "Manipuri", "Mizo",
+                     "Kokborok", "Kashmiri", "Dogri", "Maithili", "Santali", "Sindhi", "Nepali"):
+            self.assertIn(lang, INDIAN_LANGUAGES)
+            self.assertIn(lang, LANG_CODES)
+        self.assertEqual(LANGUAGE_ALIASES["uttarakhandi"], "Garhwali")
+        raw = dict(IMDB_MYSAA, spokenLanguages={"spokenLanguages": [{"text": "Garhwali"}]})
+        self.assertIsNotNone(IndianReleaseTrackerService._imdb_title(raw, "Movie", {"garhwali"}, TODAY))
+        self.assertIsNone(IndianReleaseTrackerService._imdb_title(raw, "Movie", {"hindi"}, TODAY))     # unticked
+
+    def test_studio_channel_ignores_lookalikes(self):
+        from app.services.indian_release_tracker import pick_studio_channel
+        # real YouTube channel-search results, 30 Oct 2026
+        hombale = [{"name": "Hombale Films", "ch": "https://www.youtube.com/@HombaleFilms", "ver": True},
+                   {"name": "Hombale Films", "ch": "https://www.youtube.com/@tirumalajj83", "ver": False}]
+        unformula = [{"name": "UnFormula Films", "ch": "https://www.youtube.com/@UnFormulaFilms", "ver": False},
+                     {"name": "Filmxplan", "ch": "https://www.youtube.com/@Filmxplain4k", "ver": False}]
+        haashtag = [{"name": "Hashtag Creative Media", "ch": "https://www.youtube.com/@hashtagcreativemedia1166", "ver": False}]
+        yrf = [{"name": "YRF", "ch": "https://www.youtube.com/@yrf", "ver": True},
+               {"name": "YRF Entertainment", "ch": "https://www.youtube.com/@yrfentertainment8925", "ver": False}]
+        self.assertEqual(pick_studio_channel("Hombale Films", hombale[::-1]), "https://www.youtube.com/@HombaleFilms")
+        self.assertEqual(pick_studio_channel("UnFormula Films", unformula), "https://www.youtube.com/@UnFormulaFilms")
+        self.assertEqual(pick_studio_channel("Haashtag Media", haashtag), "")
+        self.assertEqual(pick_studio_channel("YRF Entertainment", yrf), "https://www.youtube.com/@yrf")
+
+    def test_studio_channels_added_to_column(self):
+        t = Title("Mysaa", studio="Haashtag Media, UnFormula Films", youtube_channels=["https://www.youtube.com/@tseries",
+                  "https://www.youtube.com/@UnFormulaFilms"], youtube_roles=["music", "studio_channel"])
+        row = t.row()
+        self.assertEqual(row["Top YouTube Channels"].split("\n"),
+                         ["https://www.youtube.com/@tseries|Mysaa", "https://www.youtube.com/@UnFormulaFilms|Mysaa"])
+        self.assertEqual(row["YouTube Channel Roles"].split("\n"), ["Music company", "Studio (official channel)"])
+        self.assertNotIn("Top 3 YouTube Channels", row)
+
+
+class TmdbTokenTests(unittest.TestCase):
+    def test_bad_token_falls_back_to_api_key(self):
+        calls = []
+
+        class S(FakeSession):
+            def get(self, url, params=None, headers=None, timeout=None):
+                calls.append(("bearer" if headers and "Authorization" in headers else "key", dict(params or {})))
+                if headers and "Authorization" in headers:
+                    return FakeResponse({"status_message": "Invalid API key"}, status_code=401)
+                return FakeResponse({"results": [1]})
+
+        class H(FakeHttp):
+            session = S()
+
+        svc = IndianReleaseTrackerService(H(), tmdb_api_key="key123", tmdb_read_access_token="bad")
+        self.assertEqual(svc._tmdb("/discover/tv", {"page": 1}), {"results": [1]})
+        self.assertEqual(svc._tmdb("/discover/tv", {"page": 2}), {"results": [1]})       # token not retried
+        self.assertEqual([c[0] for c in calls], ["bearer", "key", "key"])
+        self.assertEqual(calls[1][1]["api_key"], "key123")
+
+
 class DiagnosticsTests(unittest.TestCase):
     def test_reports_every_source_without_raising(self):
         checks = IndianReleaseTrackerService(FakeHttp()).diagnose()
-        self.assertEqual(len(checks), 13)                                # 12 data sources + Sacnilk
+        self.assertEqual(len(checks), 14)                                # build + 12 data sources + Sacnilk
         by = {c["source"]: c["status"] for c in checks}
         self.assertEqual(by["TMDB API"], "SKIPPED")                   # no key in tests
         self.assertEqual(by["YouTube results page"], "OK")
@@ -443,7 +508,7 @@ class EndToEndTests(unittest.TestCase):
             mode="4", bulk_text="Deep Jele Jai | Bengali | 1959 | tt0321968", check_cbfc=False, today=TODAY)
         row = snap["sections"][1]["rows"][0]
         self.assertEqual((row["IMDb ID"], row["Studio"], row["Origin"]), ("tt0321968", "Angel Digital", "Indian"))
-        self.assertTrue(row["Top 3 YouTube Channels"].startswith("https://www.youtube.com/@KLiKKjokhontokhon|Deep Jele Jai"))
+        self.assertTrue(row["Top YouTube Channels"].startswith("https://www.youtube.com/@KLiKKjokhontokhon|Deep Jele Jai"))
         self.assertEqual(snap["sections"][-1]["columns"], COVERAGE_COLUMNS)
 
     def test_mode4_needs_list(self):
