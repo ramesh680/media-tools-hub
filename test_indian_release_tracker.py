@@ -13,6 +13,7 @@ import json
 import unittest
 
 from app.services.indian_release_tracker import (
+    parse_listing_date, parse_listing_page,
     COVERAGE_COLUMNS, TITLE_COLUMNS, IndianReleaseTrackerService, Title, filter_window,
     merge_titles, parse_cbfc_results, parse_film_year_page, parse_tv_list_page,
     parse_youtube_results, pick_top3, read_title_list, resolve_window,
@@ -234,10 +235,44 @@ class IngestExportTests(unittest.TestCase):
         self.assertEqual([s["ingest_category"] for s in snap["sections"]], ["Movies", "TV Shows"])
 
 
+SACNILK_PAGE = """
+<html><body><nav>Home Upcoming Movies</nav><div>Release Status</div>
+<div class="card"><span>RELEASING TODAY</span><span>Oct 30, 2026</span><h3>Nakhrewaalii</h3><span>Hindi</span><span>Comedy, Drama</span></div>
+<div class="card"><span>COMING SOON</span><span>Nov 6, 2026</span><h3>Scene</h3><span>Tamil</span><span>Action</span></div>
+<table><tr><th>Movie</th><th>Release Date</th><th>Platform</th></tr>
+<tr><td>Kohrra Season 2</td><td>14/11/2026</td><td>Netflix</td></tr></table>
+</body></html>
+"""
+
+
+class ListingAndJustWatchTests(unittest.TestCase):
+    def test_dates(self):
+        self.assertEqual(parse_listing_date("Oct 30, 2026"), date(2026, 10, 30))
+        self.assertEqual(parse_listing_date("6th November 2026"), date(2026, 11, 6))
+        self.assertEqual(parse_listing_date("14/11/2026"), date(2026, 11, 14))
+
+    def test_cards_and_tables(self):
+        rows = {r.title: r for r in parse_listing_page(SACNILK_PAGE, "Sacnilk", "", "", TODAY)}
+        self.assertEqual(set(rows), {"Nakhrewaalii", "Scene", "Kohrra Season 2"})
+        self.assertEqual((rows["Scene"].language, rows["Scene"].sort_date), ("Tamil", "2026-11-06"))
+        self.assertEqual((rows["Kohrra Season 2"].category, rows["Kohrra Season 2"].network), ("TV Show", "Netflix"))
+
+    def test_justwatch_mapping(self):
+        edge = {"newOffer": None, "node": {"__typename": "Season", "content": {"title": "Season 2"}, "show": {"content": {
+            "title": "Kohrra", "productionCountries": ["IN"], "externalIds": {"imdbId": "tt123"},
+            "genres": [{"shortName": "crm"}], "credits": [{"name": "Sudip Sharma"}],
+            "upcomingReleases": [{"releaseDate": "2026-11-14", "package": {"clearName": "Netflix"}}]}}}}
+        t = IndianReleaseTrackerService._jw_title(edge, TODAY, TODAY)
+        self.assertEqual((t.title, t.category, t.network, t.sort_date, t.imdb_id, t.genre),
+                         ("Kohrra – Season 2", "TV Show", "Netflix", "2026-11-14", "tt123", "Crime"))
+        edge["node"]["show"]["content"]["productionCountries"] = ["US"]
+        self.assertIsNone(IndianReleaseTrackerService._jw_title(edge, TODAY, TODAY))   # not Indian
+
+
 class DiagnosticsTests(unittest.TestCase):
     def test_reports_every_source_without_raising(self):
         checks = IndianReleaseTrackerService(FakeHttp()).diagnose()
-        self.assertEqual(len(checks), 8)
+        self.assertEqual(len(checks), 22)                                # 10 data sources + 12 listing pages
         by = {c["source"]: c["status"] for c in checks}
         self.assertEqual(by["TMDB API"], "SKIPPED")                   # no key in tests
         self.assertEqual(by["YouTube results page"], "OK")
