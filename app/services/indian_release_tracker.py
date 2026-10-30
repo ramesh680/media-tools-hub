@@ -8,8 +8,8 @@ origin, Pay 1/Library window and source.
 
 Run modes (same as the skill's menu):
   1  2024-01-01 -> today + 1 year (announced "Date TBA" titles kept)
-  2  1st of this month -> today + 3 months
-  3  1st of this month -> today + 6 months
+  2  this month + the next 2 (e.g. October -> 1 Oct to 31 Dec)
+  3  this month + the next 5 (e.g. October -> 1 Oct to 31 Mar)
   4  only the uploaded / pasted title list (any year, any country)
   5  custom: own date range, languages, TV on/off, notes
 
@@ -290,10 +290,10 @@ def resolve_window(mode: str, today: date, custom_start: str = "", custom_end: s
     first = today.replace(day=1)
     if mode == "1":
         return date(2024, 1, 1), today + relativedelta(years=1), True
-    if mode == "2":
-        return first, today + relativedelta(months=3), False
-    if mode == "3":
-        return first, today + relativedelta(months=6), False
+    if mode == "2":       # 3 calendar months incl. this one: Oct -> 1 Oct to 31 Dec
+        return first, first + relativedelta(months=3) - timedelta(days=1), False
+    if mode == "3":       # 6 calendar months incl. this one: Oct -> 1 Oct to 31 Mar
+        return first, first + relativedelta(months=6) - timedelta(days=1), False
     if mode == "4":
         return None, None, True
     start = _parse_iso(custom_start) or date(2024, 1, 1)
