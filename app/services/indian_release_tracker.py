@@ -69,7 +69,7 @@ INDIAN_LOWER = {x.lower() for x in INDIAN_LANGUAGES} | {"urdu", "konkani", "hary
 TITLE_COLUMNS = [
     "Title Name", "IMDb ID", "Category", "Release Date", "Release Status", "Genre", "Language",
     "Produce by", "Studio", "Network", "Director", "Cast", "Teaser / Trailer on YouTube",
-    "Top 3 YouTube Channels", "Type / Platform", "Certificate Type", "Certificate No.", "Duration",
+    "Top 3 YouTube Channels", "YouTube Channel Roles", "Type / Platform", "Certificate Type", "Certificate No.", "Duration",
     "CBFC Office", "Origin", "OTT Window (Pay 1 / Library)", "Source",
 ]
 COVERAGE_COLUMNS = ["Title", "IMDb ID", "Language", "Year", "Origin", "Window", "Wikidata",
@@ -106,7 +106,7 @@ JW_GENRES = {"act": "Action", "ani": "Animation", "cmy": "Comedy", "crm": "Crime
              "drm": "Drama", "fml": "Family", "fnt": "Fantasy", "hst": "History", "hrr": "Horror",
              "msc": "Music", "rma": "Romance", "scf": "Sci-Fi", "spt": "Sport", "trl": "Thriller",
              "war": "War", "wsn": "Western", "rly": "Reality", "eur": "Made in Europe"}
-JW_CONTENT = ("title originalReleaseDate productionCountries externalIds{imdbId} genres{shortName} "
+JW_CONTENT = ("title fullPath originalReleaseDate productionCountries externalIds{imdbId} genres{shortName} "
               "credits(role:DIRECTOR){name} upcomingReleases(releaseTypes:[DIGITAL]){releaseDate package{clearName}}")
 JW_QUERY = (
     "query($d:Date!,$pt:NewPageType!,$after:String,$packages:[String!]){newTitles(country:IN,date:$d,first:100,"
@@ -116,24 +116,21 @@ JW_QUERY = (
     'show{content(country:IN,language:"en"){' + JW_CONTENT + "}}}}}}}")
 JW_NEW_DAYS = 45                      # "new on OTT" days scanned back from today
 JW_MAX_PAGES = 10
+IMDB_SUGGEST = "https://v2.sg.media-imdb.com/suggestion/{first}/{query}.json"
+IMDB_RESOLVE_MAX = 4000
 IMDB_LISTS = [("ls548141776", "IMDb list – Most Anticipated Indian Movies")]
 # Listing pages parsed with the generic table / card parser (default language, default platform).
+# Only listing pages whose layout has been verified on real data create rows; unstructured
+# news/aggregator pages are linked in the UI for manual cross-checks but never set titles or dates.
 LISTING_SITES = [
     ("Sacnilk – upcoming movies", "https://www.sacnilk.com/upcoming-movies", "", ""),
-    ("BoxOfficeIndia24 – OTT upcoming", "https://www.boxofficeindia24.com/ott/upcoming", "", ""),
-    ("OTTDrop", "https://www.ottdrop.com/", "", ""),
-    ("OTTweek", "https://ottweek.com/", "", ""),
-    ("OTT Movie Releases", "https://www.ottmoviereleases.com/", "", ""),
-    ("Binged", "https://www.binged.com/", "", ""),
-    ("Filmibeat – upcoming Tamil", "https://www.filmibeat.com/tamil/upcoming-movies.html", "Tamil", ""),
-    ("91mobiles – upcoming Tamil", "https://www.91mobiles.com/entertainment/upcoming-tamil-movies", "Tamil", ""),
-    ("District – upcoming movies", "https://www.district.in/movies/upcoming-movies", "", ""),
-    ("BookMyShow – upcoming", "https://in.bookmyshow.com/explore/upcoming-movies", "", ""),
-    ("What's on Netflix – Indian originals 2026",
-     "https://www.whats-on-netflix.com/coming-soon/new-indian-netflix-original-series-and-movies-coming-to-netflix-in-2026",
-     "", "Netflix"),
-    ("About Amazon India – Prime Video upcoming",
-     "https://www.aboutamazon.in/news/entertainment/new-upcoming-shows-movies-prime-video-india", "", "Amazon Prime Video"),
+]
+CROSS_CHECK_SITES = [
+    "https://www.boxofficeindia24.com/ott/upcoming", "https://www.ottdrop.com/", "https://ottweek.com/",
+    "https://www.ottmoviereleases.com/", "https://www.binged.com/", "https://www.filmibeat.com/tamil/upcoming-movies.html",
+    "https://www.91mobiles.com/entertainment/upcoming-tamil-movies", "https://www.district.in/movies/upcoming-movies",
+    "https://in.bookmyshow.com/", "https://www.whats-on-netflix.com/coming-soon/new-indian-netflix-original-series-and-movies-coming-to-netflix-in-2026",
+    "https://www.aboutamazon.in/news/entertainment/new-upcoming-shows-movies-prime-video-india",
 ]
 LISTING_MAX_ROWS = 400
 DATE_RX = re.compile(
@@ -162,7 +159,8 @@ def parse_listing_date(text: str) -> date | None:
         return None
 
 
-def parse_listing_page(html: str, site: str, default_lang: str, default_platform: str, today: date) -> list[Title]:
+def parse_listing_page(html: str, site: str, default_lang: str, default_platform: str, today: date,
+                       page_url: str = "") -> list[Title]:
     """Generic: (1) tables with a title + date column, (2) card text 'date -> title -> language/platform'."""
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript", "nav", "footer", "header"]):
@@ -185,6 +183,7 @@ def parse_listing_page(html: str, site: str, default_lang: str, default_platform
                   status=status_for(d.isoformat(), today, "Tentative"),
                   type_platform=f"OTT ({net})" if net else "Film – Theatrical", source=site,
                   origin="International" if (lang or default_lang) == "English" else "Indian")
+        t.add_url(page_url)
         found[norm(title)] = t
 
     for table in soup.select("table"):
@@ -248,11 +247,12 @@ IMDB_TV_TYPES = ["tvSeries", "tvMiniSeries"]
 IMDB_FIELDS = (
     "id titleText{text} titleType{id} releaseDate{day month year} genres{genres{text}} "
     "spokenLanguages{spokenLanguages{text}} countriesOfOrigin{countries{id}} "
+    'inDate:releaseDates(first:5,filter:{countries:["IN"]}){edges{node{day month year}}} '
     'directors:credits(first:3,filter:{categories:["director"]}){edges{node{name{nameText{text}}}}} '
-    'cast:credits(first:3,filter:{categories:["actor","actress"]}){edges{node{name{nameText{text}}}}} '
-    'producers:credits(first:3,filter:{categories:["producer"]}){edges{node{name{nameText{text}}}}} '
-    'prod:companyCredits(first:3,filter:{categories:["production"]}){edges{node{company{companyText{text}}}}} '
-    'dist:companyCredits(first:12,filter:{categories:["distribution"]}){edges{node{company{companyText{text}}}}} '
+    'cast:credits(first:5,filter:{categories:["actor","actress"]}){edges{node{name{nameText{text}}}}} '
+    'producers:credits(first:5,filter:{categories:["producer"]}){edges{node{name{nameText{text}}}}} '
+    'prod:companyCredits(first:5,filter:{categories:["production"]}){edges{node{company{companyText{text}}}}} '
+    'dist:companyCredits(first:15,filter:{categories:["distribution"]}){edges{node{company{companyText{text}}}}} '
     "runtime{seconds} certificate{rating}")
 IMDB_SEARCH_QUERY = (
     "query($types:[String!]!,$start:Date,$end:Date,$after:String,$first:Int!){"
@@ -323,6 +323,7 @@ class Title:
     cast: str = ""
     trailer_url: str = ""
     youtube_channels: list[str] = field(default_factory=list)
+    youtube_roles: list[str] = field(default_factory=list)
     type_platform: str = "Film – Theatrical"
     certificate_type: str = ""
     certificate_no: str = ""
@@ -333,6 +334,14 @@ class Title:
     imdb_id: str = ""
     source: str = ""
     from_list: bool = False
+    source_urls: list[str] = field(default_factory=list)
+    credits: dict[str, list[str]] = field(default_factory=dict)   # role -> names (for YouTube matching)
+    validated: str = ""                                            # "IMDb" / "TMDB" when checked
+    season_row: bool = False                                       # a new season of an older series
+
+    def add_url(self, url: str) -> None:
+        if url and url not in self.source_urls:
+            self.source_urls.append(url)
 
     def row(self) -> dict[str, str]:
         trailer = self.trailer_url or YT_RESULTS + quote_plus(f"{self.title} official trailer")
@@ -347,16 +356,146 @@ class Title:
             "Language": self.language, "Produce by": self.produced_by,
             "Studio": self.studio or self.produced_by, "Network": net, "Director": self.director,
             "Cast": self.cast, "Teaser / Trailer on YouTube": trailer, "Top 3 YouTube Channels": chans,
+            "YouTube Channel Roles": "\n".join(ROLE_LABELS.get(r, r) for r in self.youtube_roles[:3]),
             "Type / Platform": self.type_platform, "Certificate Type": self.certificate_type,
             "Certificate No.": self.certificate_no, "Duration": self.duration,
             "CBFC Office": self.cbfc_office, "Origin": self.origin,
-            "OTT Window (Pay 1 / Library)": self.window, "Source": self.source,
+            "OTT Window (Pay 1 / Library)": self.window,
+            "Source": "\n".join(self.source_urls) or self.source,
         }
         return {k: (v if v else "—") for k, v in values.items()}
 
 
+ROLE_LABELS = {"studio": "Studio", "producer": "Producer", "distributor": "Distributor", "network": "Network / OTT",
+               "music": "Music company", "director": "Director", "actor": "Actor/Actress"}
+
 MERGE_FIELDS = ("imdb_id", "genre", "produced_by", "studio", "network", "director", "cast",
                 "trailer_url", "window", "certificate_type", "certificate_no", "duration", "cbfc_office")
+
+
+def imdb_release(t: dict) -> tuple[date | None, str]:
+    """Earliest India release date with a day, else IMDb's main release date."""
+    best = None
+    for e in ((t.get("inDate") or {}).get("edges") or []):
+        n = e.get("node") or {}
+        if n.get("year") and n.get("month") and n.get("day"):
+            try:
+                d = date(n["year"], n["month"], n["day"])
+            except ValueError:
+                continue
+            best = d if best is None or d < best else best
+    if best:
+        return best, best.strftime("%d %b %Y")
+    rd = t.get("releaseDate") or {}
+    if not rd.get("year"):
+        return None, "TBA (announced)"
+    try:
+        d = date(rd["year"], rd.get("month") or 1, rd.get("day") or 1)
+    except ValueError:
+        return None, "TBA (announced)"
+    return d, d.strftime("%d %b %Y") if rd.get("day") else (d.strftime("%b %Y") if rd.get("month") else str(rd["year"]))
+
+
+# Official YouTube channels must belong to someone credited on the title. Music companies and OTT
+# networks are recognised from these curated names (Indian labels / platforms); nothing else counts.
+MUSIC_LABELS = ["T-Series", "Saregama", "Sony Music", "Zee Music", "Tips", "Aditya Music", "Lahari", "Think Music",
+                "Mango Music", "Muzik247", "Anand Audio", "Junglee Music", "Times Music", "Speed Records",
+                "White Hill", "Saga Music", "Ultra", "Rajshri", "Shemaroo", "Venus", "Divo", "Panorama Music",
+                "Everest", "Angel", "SVF", "Amara Muzik", "Tarang", "Sun Music", "Sony Music South", "Star Music",
+                "Eros Now Music", "Yash Raj Films", "YRF", "Goldmines", "Pen Movies", "Krishna Digital",
+                "Madhura Audio", "Mass Audios", "Satyam Audios", "PVR Music", "Raj Music", "Desi Melodies",
+                "Speed Records", "Geet MP3", "Jass Records", "Humble Music", "Saavn", "Sun TV", "Manorama Music",
+                "Millennium Audios", "Goodwill Entertainments", "Satyam Videos", "Bhavana Studios"]
+OTT_NETWORKS = ["Netflix India", "Netflix", "Prime Video India", "Prime Video", "Amazon MX Player", "JioHotstar",
+                "Disney+ Hotstar", "ZEE5", "Sony LIV", "SonyLIV", "Sun NXT", "aha", "hoichoi", "KLiKK", "Chaupal",
+                "ManoramaMAX", "Planet Marathi", "ETV Win", "MX Player", "Lionsgate Play", "Discovery+",
+                "ShemarooMe", "Hungama", "EPIC ON", "JioCinema", "Colors TV", "Star Plus", "Sony TV", "Zee TV",
+                "Sun TV", "Star Maa", "Zee Telugu", "Zee Tamil", "Vijay Television", "Asianet", "Colors Kannada"]
+_STRIP = ("officialchannel", "official", "entertainment", "entertainments", "productions", "production", "pictures",
+          "films", "film", "studios", "studio", "media", "music", "musics", "movies", "movie", "creations", "company",
+          "india", "pvtltd", "ltd", "pvt", "digital", "songs", "videos", "video", "audios", "audio", "records",
+          "telugu", "tamil", "hindi", "malayalam", "kannada", "marathi", "bengali", "gujarati", "punjabi", "bhojpuri",
+          "odia", "south", "vevo", "tv", "channel")
+_GENERIC = {"", "bollywood", "tollywood", "kollywood", "mollywood", "sandalwood", "cinema", "trailer", "trailers",
+            "new", "latest", "movieclips", "filmy", "world", "hd", "series", "sseries", "daily", "news"}
+
+
+def channel_core(name: str) -> str:
+    c = norm(name)
+    changed = True
+    while changed:
+        changed = False
+        for suf in _STRIP:
+            if c.endswith(suf) and len(c) > len(suf):
+                c, changed = c[: -len(suf)], True
+            if c.startswith(suf) and len(c) > len(suf) + 2:
+                c, changed = c[len(suf):], True
+    return c
+
+
+def channel_matches(channel: str, credit: str) -> bool:
+    """Same entity? 'T-Series Telugu' ~ 'T-Series', 'YRF' ~ 'Yash Raj Films', 'Netflix India' ~ 'Netflix'."""
+    c, k = channel_core(channel), channel_core(credit)
+    if c in _GENERIC or k in _GENERIC or len(c) < 2 or len(k) < 2:
+        return False
+    if c == k:
+        return True
+    if len(c) >= 5 and len(k) >= 5 and (k.startswith(c) or c.startswith(k)):
+        return True
+    words = [w for w in re.findall(r"[A-Za-z0-9]+", credit) if w.lower() not in {"pvt", "ltd", "the", "and", "of"}]
+    acronym = "".join(w[0] for w in words).lower()
+    return len(acronym) >= 3 and c == acronym
+
+
+def published_year(text: str, today: date) -> int | None:
+    """'1mo ago' / '3 years ago' / '2 weeks ago' -> approximate upload year."""
+    m = re.search(r"(\d+)\s*(y|year|mo|month|w|week|d|day|h|hour|min|minute|s|second)", (text or "").lower())
+    if not m:
+        return None
+    n, unit = int(m.group(1)), m.group(2)
+    days = n * {"y": 365, "year": 365, "mo": 30, "month": 30, "w": 7, "week": 7}.get(unit, 0)
+    return (today - timedelta(days=days)).year
+
+
+YT_ROLE_ORDER = ("studio", "producer", "distributor", "network", "music", "director", "actor")
+
+
+def pick_official_channels(t: "Title", results: list[list[dict[str, Any]]], today: date) -> tuple[str, list[tuple[str, str]]]:
+    """Official trailers only: the video's title must contain the film's title, be a trailer/teaser/glimpse,
+    be uploaded around the release year, and come from a channel of someone credited on the title
+    (studio, producer, distributor, network, music company, director, actor). Returns (trailer, [(url, role)])."""
+    base = re.sub(r"\s*\(.*?\)\s*", " ", t.title)
+    base = re.sub(r"\s*[-–]?\s*season\s*\d+.*$", "", base, flags=re.I).strip()
+    key = norm(base)
+    year = int(t.sort_date[:4]) if t.sort_date else None
+    credits = {r: [n for n in t.credits.get(r, []) if n] for r in YT_ROLE_ORDER}
+    credits["network"] = list(dict.fromkeys(credits.get("network", []) + [n for n in re.split(r",\s*", t.network or "") if n]))
+    credits["studio"] = list(dict.fromkeys(credits.get("studio", []) + [n for n in re.split(r",\s*", t.studio or "") if n]))
+    chosen: dict[str, tuple[int, str, str]] = {}
+    trailer = ""
+    for videos in results:
+        for v in videos:
+            if not key or key not in norm(v["t"]) or not re.search(r"trailer|teaser|glimpse|promo|first look", v["t"], re.I):
+                continue
+            if year:
+                py = published_year(v.get("pub", ""), today)
+                if py and not (year - 2 <= py <= year + 1) and year >= today.year - 3:
+                    continue                          # uploaded in a different era -> a different title
+            role = next((r for r in YT_ROLE_ORDER for n in credits.get(r, []) if channel_matches(v["name"], n)), "")
+            if not role and v.get("ver"):
+                if any(channel_matches(v["name"], n) for n in MUSIC_LABELS):
+                    role = "music"
+                elif any(channel_matches(v["name"], n) for n in OTT_NETWORKS):
+                    role = "network"
+            if not role:
+                continue
+            rank = YT_ROLE_ORDER.index(role)
+            if v["ch"] not in chosen or rank < chosen[v["ch"]][0]:
+                chosen[v["ch"]] = (rank, role, v["id"])
+    ordered = sorted(chosen.items(), key=lambda kv: kv[1][0])[:3]
+    if ordered:
+        trailer = "https://www.youtube.com/watch?v=" + ordered[0][1][2]
+    return trailer, [(url, role) for url, (_, role, _) in ordered]
 
 
 def merge_titles(groups: list[list[Title]]) -> list[Title]:
@@ -383,6 +522,14 @@ def merge_titles(groups: list[list[Title]]) -> list[Title]:
                         setattr(hit, fld, getattr(t, fld))
                 if not hit.youtube_channels and t.youtube_channels:
                     hit.youtube_channels = t.youtube_channels
+                for u in t.source_urls:
+                    hit.add_url(u)
+                for role, names in t.credits.items():
+                    hit.credits.setdefault(role, names)
+                if hit.language in ("", "Unspecified") and t.language not in ("", "Unspecified"):
+                    hit.language = t.language
+                if t.category == "TV Show" and hit.category != "TV Show" and not hit.validated:
+                    hit.category, hit.season_row = "TV Show", hit.season_row or t.season_row
                 if t.from_list:
                     hit.from_list = True
                     if t.window:
@@ -448,7 +595,7 @@ def table_grid(table) -> list[list[str]]:
     return [[c or "" for c in row] for row in grid]
 
 
-def parse_film_year_page(html: str, language: str, year: int, today: date) -> list[Title]:
+def parse_film_year_page(html: str, language: str, year: int, today: date, page_url: str = "") -> list[Title]:
     soup = BeautifulSoup(html, "html.parser")
     out: list[Title] = []
     seen: set[str] = set()
@@ -487,12 +634,16 @@ def parse_film_year_page(html: str, language: str, year: int, today: date) -> li
             get = lambda i: row[i] if 0 <= i < len(row) else ""  # noqa: E731
             prod = get(c_p)
             t = Title(title=title, language=language, director=get(c_d)[:80],
-                      cast=", ".join(get(c_c).split(", ")[:3]), produced_by=prod, genre=get(c_g),
+                      cast=", ".join(get(c_c).split(", ")[:3]), studio=prod, genre=get(c_g),
                       source=f"Wikipedia – List of {language} films of {year}")
+            t.add_url(page_url or f"https://en.wikipedia.org/wiki/List_of_{language}_films_of_{year}")
             net = NETWORK_RE.search(prod or "")
             if net:
                 t.network = net.group(0).strip()
                 t.studio = re.sub(r",?\s*(Netflix|Amazon Prime Video|Prime Video|JioHotstar|ZEE5|SonyLIV|Sun NXT|ETV Win)\b", "", prod).strip(" ,/")
+            t.credits = {"director": [x for x in t.director.split(", ") if x],
+                         "actor": [x for x in t.cast.split(", ") if x],
+                         "studio": [x.strip() for x in re.split(r"[,/]", t.studio) if x.strip()]}
             try:
                 if mon and day:
                     d = date(year, mon, day)
@@ -507,7 +658,7 @@ def parse_film_year_page(html: str, language: str, year: int, today: date) -> li
     return out
 
 
-def parse_tv_list_page(html: str, platform: str, today: date) -> list[Title]:
+def parse_tv_list_page(html: str, platform: str, today: date, page_url: str = "") -> list[Title]:
     soup = BeautifulSoup(html, "html.parser")
     out: list[Title] = []
     for table in soup.select("table.wikitable"):
@@ -542,6 +693,7 @@ def parse_tv_list_page(html: str, platform: str, today: date) -> list[Title]:
                       type_platform=f"Web series – OTT ({platform})",
                       release_date=d.strftime("%d %b %Y"), sort_date=d.isoformat(),
                       source=f"Wikipedia – {platform} originals list")
+            t.add_url(page_url)
             t.status = status_for(t.sort_date, today)
             out.append(t)
     return out
@@ -579,6 +731,8 @@ def parse_youtube_results(html: str) -> list[dict[str, Any]] | None:
             "t": "".join(r.get("text", "") for r in (v.get("title") or {}).get("runs", [])),
             "ch": "https://www.youtube.com" + (ep.get("canonicalBaseUrl") or "/channel/" + ep.get("browseId", "")),
             "ver": "VERIFIED" in json.dumps(v.get("ownerBadges") or []),
+            "name": run.get("text", ""),
+            "pub": (v.get("publishedTimeText") or {}).get("simpleText", ""),
         })
     return out
 
@@ -692,12 +846,13 @@ def to_date(value: Any) -> date | None:
 # --------------------------------------------------------------------------------------------
 class IndianReleaseTrackerService:
     def __init__(self, http_client, youtube_api_key: str = "", tmdb_api_key: str = "",
-                 tmdb_read_access_token: str = "", omdb_api_key: str = "") -> None:
+                 tmdb_read_access_token: str = "", omdb_api_key: str = "", imdb_service=None) -> None:
         self.http = http_client
         self.youtube_api_key = youtube_api_key
         self.tmdb_api_key = tmdb_api_key
         self.tmdb_token = tmdb_read_access_token
         self.omdb_api_key = omdb_api_key
+        self.imdb_service = imdb_service
         self.notes: list[str] = []
 
     # -- HTTP --------------------------------------------------------------------------------
@@ -745,12 +900,19 @@ class IndianReleaseTrackerService:
             list_titles, coverage = self._resolve_list(listed, today, progress)
             groups.append(list_titles)
 
-        progress(55, "Merging sources")
-        titles = filter_window(merge_titles(groups), start, end, keep_tba, only_list)
+        progress(50, "Merging sources")
+        merged = merge_titles(groups)
+        # loose window first (validation can move a date by up to a year), then validate, then strict window
+        if not only_list and start and end:
+            lo, hi = (start - timedelta(days=400)).isoformat(), (end + timedelta(days=400)).isoformat()
+            merged = [t for t in merged if t.from_list or not t.sort_date or lo <= t.sort_date <= hi]
+        self._resolve_imdb_ids(merged, progress)
+        self._imdb_validate(merged, today, progress)
+        self._tmdb_enrich(merged, today, progress)
+        self._omdb_enrich(merged, progress)
+        merged = merge_titles([merged])                       # same IMDb ID found under two names
+        titles = filter_window(merged, start, end, keep_tba, only_list)
         titles.sort(key=lambda t: (t.sort_date or "9999-12-31", t.title.lower()))
-
-        self._tmdb_enrich(titles, today, progress)
-        self._omdb_enrich(titles, progress)
 
         self._youtube(titles, youtube_scope, today, api_key_override or self.youtube_api_key, progress)
         if check_cbfc:
@@ -765,6 +927,7 @@ class IndianReleaseTrackerService:
         with_net = sum(bool(r["Network"] != "—") for r in rows)
         by_status = ", ".join(f"{s}: {sum(t.status == s for t in titles)}" for s in STATUSES if any(t.status == s for t in titles))
         summary = (f"Mode {mode} – {window_text}. {len(titles)} titles ({movies} movies, {len(titles) - movies} TV shows); "
+                   f"{sum(t.validated == 'IMDb' for t in titles)} validated on IMDb, {sum(t.validated == 'TMDB' for t in titles)} on TMDB; "
                    f"{sum(bool(t.imdb_id) for t in titles)} with an IMDb ID, {with_yt} with Top 3 YouTube channels, "
                    f"{with_net} with a Network. {by_status}.")
         if notes:
@@ -891,12 +1054,16 @@ class IndianReleaseTrackerService:
         missing = []
         for i, (lang, year) in enumerate(jobs):
             progress(10 + int(30 * i / max(len(jobs), 1)), f"Wikipedia: {lang} films of {year}")
-            html = self._wiki_page_html(f"List of {lang} films of {year}") or \
-                self._wiki_page_html(f"List of Indian {lang} films of {year}")
+            page = f"List of {lang} films of {year}"
+            html = self._wiki_page_html(page)
+            if not html:
+                page = f"List of Indian {lang} films of {year}"
+                html = self._wiki_page_html(page)
             if not html:
                 missing.append(f"{lang} {year}")
                 continue
-            out.extend(parse_film_year_page(html, lang, year, today))
+            out.extend(parse_film_year_page(html, lang, year, today,
+                                            "https://en.wikipedia.org/wiki/" + quote(page.replace(" ", "_"))))
         if missing:
             self.notes.append(f"No Wikipedia year page yet for: {', '.join(missing[:12])}{'…' if len(missing) > 12 else ''}.")
         return out
@@ -907,7 +1074,8 @@ class IndianReleaseTrackerService:
             progress(42, f"Wikipedia: {platform} originals")
             html = self._wiki_page_html(page)
             if html:
-                out.extend(parse_tv_list_page(html, platform, today))
+                out.extend(parse_tv_list_page(html, platform, today,
+                                              "https://en.wikipedia.org/wiki/" + quote(page.replace(" ", "_"))))
         return out
 
     def _imdb_advanced_search(self, start, end, include_tv, languages, today, progress) -> list[Title]:
@@ -950,44 +1118,162 @@ class IndianReleaseTrackerService:
 
     @staticmethod
     def _imdb_title(t: dict, category: str, wanted: set[str], today: date) -> Title | None:
+        """Map an IMDb GraphQL title. India release date wins over the worldwide one."""
         names = lambda key, path: [e["node"][path[0]][path[1]]["text"]  # noqa: E731
                                    for e in ((t.get(key) or {}).get("edges") or [])]
         langs = [x["text"] for x in ((t.get("spokenLanguages") or {}).get("spokenLanguages") or [])]
         indian = [l for l in langs if l.lower() in INDIAN_LOWER]
         if indian and wanted and not any(l.lower() in wanted for l in indian):
             return None                                   # a language the user unticked
-        rd = t.get("releaseDate") or {}
-        d = None
-        if rd.get("year"):
-            try:
-                d = date(rd["year"], rd.get("month") or 1, rd.get("day") or 1)
-            except ValueError:
-                d = None
-        release = (d.strftime("%d %b %Y") if rd.get("day") else d.strftime("%b %Y")) if d else "TBA (announced)"
-        dist = [n for n in names("dist", ("company", "companyText")) if NETWORK_RE.search(n)]
-        prod = ", ".join(names("prod", ("company", "companyText")))
+        d, release = imdb_release(t)
+        dist_all = names("dist", ("company", "companyText"))
+        dist = [n for n in dist_all if NETWORK_RE.search(n)]
+        prod = names("prod", ("company", "companyText"))
         type_id = (t.get("titleType") or {}).get("id", "")
+        if type_id in IMDB_TV_TYPES:
+            category = "TV Show"
+        elif type_id in IMDB_MOVIE_TYPES:
+            category = "Movie"
         runtime = ((t.get("runtime") or {}).get("seconds") or 0) // 60
-        net = ", ".join(dict.fromkeys(dist[:3]))
         if category == "Movie":
             platform = "TV Movie" if type_id == "tvMovie" else "Film – Theatrical"
         else:
             platform = f"{'Mini-series' if type_id == 'tvMiniSeries' else 'TV series'} – " + (f"OTT ({dist[0]})" if dist else "TV / OTT")
         countries = [x["id"] for x in ((t.get("countriesOfOrigin") or {}).get("countries") or [])]
-        return Title(
+        row = Title(
             title=(t.get("titleText") or {}).get("text", ""), imdb_id=t["id"], category=category,
             genre=" / ".join(g["text"] for g in ((t.get("genres") or {}).get("genres") or [])),
-            language=(langs[0] + (f" (+ {', '.join(langs[1:])})" if langs[1:] else "")) if langs else "Unspecified",
+            language=langs[0] if langs else "Unspecified",
             director=", ".join(names("directors", ("name", "nameText"))),
-            cast=", ".join(names("cast", ("name", "nameText"))),
-            produced_by=", ".join(names("producers", ("name", "nameText"))) or prod, studio=prod, network=net,
+            cast=", ".join(names("cast", ("name", "nameText"))[:3]),
+            produced_by=", ".join(names("producers", ("name", "nameText"))), studio=", ".join(prod),
+            network=", ".join(dict.fromkeys(dist[:3])),
             release_date=release, sort_date=d.isoformat() if d else None,
             status=status_for(d.isoformat() if d else None, today, "Tentative"),
             duration=f"{runtime} min" if runtime else "",
             certificate_type=((t.get("certificate") or {}).get("rating") or ""),
-            type_platform=platform,
+            type_platform=platform, validated="IMDb",
             origin="Indian" if ("IN" in countries and (indian or not langs)) else "International",
-            source="IMDb Advanced Search (country of origin: India)")
+            source="IMDb")
+        row.credits = {"actor": names("cast", ("name", "nameText")), "director": names("directors", ("name", "nameText")),
+                       "producer": names("producers", ("name", "nameText")), "studio": prod, "distributor": dist_all}
+        row.add_url(f"https://www.imdb.com/title/{t['id']}/")
+        return row
+
+    # -- validation: IMDb IDs (hub logic) + IMDb as the authority -----------------------------
+    def _imdb_suggest(self, t: Title) -> str:
+        """The hub's ttcode logic: the local IMDb index when enabled, else IMDb's suggestion API,
+        matched on exact title + title type + year (+-1)."""
+        year = int(t.sort_date[:4]) if t.sort_date else None
+        types = ["tvSeries", "tvMiniSeries"] if t.category == "TV Show" else ["movie", "tvMovie"]
+        base = re.sub(r"\s*[-–]\s*season\s*\d+.*$", "", re.sub(r"\s*\(.*?\)\s*", " ", t.title), flags=re.I).strip()
+        if self.imdb_service is not None and getattr(self.imdb_service, "enabled", False):
+            try:
+                hit = self.imdb_service.lookup_title(base, category="TV Shows" if t.category == "TV Show" else "Movies",
+                                                     release_date=date(year, 1, 1) if year else None, preferred_types=types)
+                if hit and norm(hit.get("title", "")) == norm(base) and (not year or not str(hit.get("start_year", "")).isdigit()
+                                                                          or abs(int(hit["start_year"]) - year) <= 1):
+                    return hit["imdb_id"]
+            except Exception:
+                pass
+        q = re.sub(r"\s+", "_", base.lower())
+        first = next((ch for ch in q if ch.isalnum()), "x")
+        try:
+            data = json.loads(self.http.get_text(IMDB_SUGGEST.format(first=first, query=quote(q))))
+        except Exception:
+            return ""
+        best, best_score = "", -1
+        for item in data.get("d") or []:
+            iid = str(item.get("id", ""))
+            if not iid.startswith("tt") or norm(item.get("l", "")) != norm(base):
+                continue
+            score = 10 if item.get("qid") in types else 0
+            y = item.get("y")
+            if year and isinstance(y, int):
+                if abs(y - year) > 1 and not t.season_row:
+                    continue
+                score += 20 - abs(y - year) * 5
+            elif year:
+                score -= 5
+            if score > best_score:
+                best, best_score = iid, score
+        return best
+
+    def _resolve_imdb_ids(self, titles: list[Title], progress) -> None:
+        targets = [t for t in titles if not t.imdb_id][:IMDB_RESOLVE_MAX]
+        if not targets:
+            return
+        progress(52, f"IMDb: matching {len(targets)} titles to IMDb IDs")
+        found = {"n": 0}
+
+        def one(t: Title) -> None:
+            iid = self._imdb_suggest(t)
+            if iid:
+                t.imdb_id = iid
+                found["n"] += 1
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(one, targets))
+        self.notes.append(f"IMDb IDs matched for {found['n']} of {len(targets)} titles that had none (title + type + year).")
+
+    def _imdb_validate(self, titles: list[Title], today: date, progress) -> None:
+        """IMDb is the authority for category, release date, language, producers and studios. A row whose
+        IMDb record disagrees (other language, release years apart) loses the IMDb ID instead of being merged."""
+        ids = list(dict.fromkeys(t.imdb_id for t in titles if t.imdb_id))
+        if not ids:
+            return
+        progress(55, f"IMDb: validating {len(ids)} titles")
+        info: dict[str, dict] = {}
+        failed = False
+        for i in range(0, len(ids), 50):
+            try:
+                r = self.http.session.post(IMDB_GRAPHQL, timeout=self.http.timeout_seconds,
+                                           headers={"content-type": "application/json"},
+                                           json={"query": IMDB_TITLES_QUERY, "variables": {"ids": ids[i:i + 50]}})
+                for t in (r.json().get("data") or {}).get("titles") or []:
+                    if t:
+                        info[t["id"]] = t
+            except Exception:
+                failed = True
+        if failed and not info:
+            self.notes.append("IMDb validation unavailable from the server – rows rely on their own sources.")
+            return
+        corrected = rejected = 0
+        for t in titles:
+            raw = info.get(t.imdb_id)
+            if not raw:
+                continue
+            ref = self._imdb_title(raw, t.category, set(), today)
+            if ref is None:
+                continue
+            our_lang = t.language.split(" (")[0].strip().lower()
+            ref_langs = [x["text"].lower() for x in ((raw.get("spokenLanguages") or {}).get("spokenLanguages") or [])]
+            year_gap = (abs(int(t.sort_date[:4]) - int(ref.sort_date[:4]))
+                        if t.sort_date and ref.sort_date and not t.season_row else 0)
+            lang_clash = our_lang in INDIAN_LOWER and ref_langs and our_lang not in ref_langs
+            if (year_gap > 1 or lang_clash) and not t.from_list:
+                t.imdb_id = ""                       # different title with the same name
+                rejected += 1
+                continue
+            t.category = ref.category if not t.season_row else "TV Show"
+            if ref.sort_date and not t.season_row and t.sort_date != ref.sort_date:
+                if t.sort_date and t.sort_date[:4] != ref.sort_date[:4]:
+                    corrected += 1
+                t.release_date, t.sort_date, t.status = ref.release_date, ref.sort_date, ref.status
+            if t.language in ("", "Unspecified") or (our_lang not in INDIAN_LOWER and ref.language != "Unspecified"):
+                t.language = ref.language
+            for fld in ("genre", "director", "cast", "produced_by", "studio", "network", "duration"):
+                if getattr(ref, fld) and (not getattr(t, fld) or fld in ("produced_by", "studio")):
+                    setattr(t, fld, getattr(ref, fld))
+            for role, names in ref.credits.items():
+                t.credits[role] = list(dict.fromkeys(names + t.credits.get(role, [])))
+            t.origin = ref.origin if t.origin == "Indian" else t.origin
+            if t.category == "TV Show" and "Theatrical" in t.type_platform:
+                t.type_platform = ref.type_platform
+            t.validated = "IMDb"
+            t.add_url(f"https://www.imdb.com/title/{t.imdb_id}/")
+        self.notes.append(f"IMDb validation: {sum(t.validated == 'IMDb' for t in titles)} rows confirmed, "
+                          f"{corrected} release dates corrected, {rejected} wrong IMDb matches removed.")
 
     # -- TMDB / OMDb (the hub's API keys) ----------------------------------------------------
     def _tmdb(self, path: str, params: dict | None = None) -> dict:
@@ -1003,7 +1289,7 @@ class IndianReleaseTrackerService:
         if not (self.tmdb_api_key or self.tmdb_token):
             self.notes.append("TMDB key not configured – skipped TMDB enrichment.")
             return
-        needs = [t for t in titles if not (t.imdb_id and t.genre and t.director and t.studio and t.network)]
+        needs = [t for t in titles if t.validated != "IMDb" or not (t.genre and t.director and t.studio and t.network)]
         needs.sort(key=lambda t: (not t.from_list, t.sort_date is None, -(int(t.sort_date.replace("-", "")) if t.sort_date else 0)))
         targets = needs[:TMDB_MAX_TITLES]
         if len(needs) > TMDB_MAX_TITLES:
@@ -1051,6 +1337,18 @@ class IndianReleaseTrackerService:
 
     def _apply_tmdb(self, t: Title, kind: str, tid: int) -> None:
         d = self._tmdb(f"/{kind}/{tid}", {"append_to_response": "credits,external_ids,watch/providers"})
+        raw = d.get("release_date") or d.get("first_air_date") or ""
+        has_date = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw))
+        if (not t.validated and has_date and not t.season_row and t.sort_date
+                and abs(int(t.sort_date[:4]) - int(raw[:4])) > 1):
+            return                                            # TMDB found a different title of the same name
+        t.add_url(f"https://www.themoviedb.org/{kind}/{tid}")
+        if not t.validated:
+            t.category = "TV Show" if kind == "tv" else "Movie"
+            if has_date and not t.season_row:
+                t.sort_date, t.release_date = raw, date.fromisoformat(raw).strftime("%d %b %Y")
+                t.status = status_for(raw, date.today(), "Confirmed")
+            t.validated = "TMDB"
         ext = d.get("external_ids") or {}
         if not t.imdb_id and (ext.get("imdb_id") or d.get("imdb_id") or "").startswith("tt"):
             t.imdb_id = ext.get("imdb_id") or d.get("imdb_id")
@@ -1065,12 +1363,18 @@ class IndianReleaseTrackerService:
             t.cast = ", ".join(c["name"] for c in (credits.get("cast") or [])[:3])
         if not t.studio:
             t.studio = ", ".join(c["name"] for c in (d.get("production_companies") or [])[:3])
+        t.credits.setdefault("studio", [c["name"] for c in (d.get("production_companies") or [])[:5]])
+        t.credits.setdefault("actor", [c["name"] for c in (credits.get("cast") or [])[:5]])
+        t.credits.setdefault("director", [c["name"] for c in (credits.get("crew") or []) if c.get("job") == "Director"][:3])
+        if not t.produced_by:
+            t.produced_by = ", ".join(dict.fromkeys(c["name"] for c in (credits.get("crew") or [])
+                                                    if c.get("job") in ("Producer", "Executive Producer")))[:200]
         if not t.network:
             nets = [n["name"] for n in d.get("networks") or []]
             providers = ((d.get("watch/providers") or {}).get("results") or {}).get("IN") or {}
             flat = [p["provider_name"] for p in providers.get("flatrate") or []]
             t.network = ", ".join(dict.fromkeys((nets or flat)[:3]))
-        if t.language in ("", "Unspecified") and d.get("original_language") in CODE_LANGS:
+        if t.language in ("", "Unspecified") and d.get("original_language") in CODE_LANGS | {"en": "English"}:
             t.language = CODE_LANGS[d["original_language"]]
         if not t.sort_date:
             raw = d.get("release_date") or d.get("first_air_date") or ""
@@ -1147,6 +1451,8 @@ class IndianReleaseTrackerService:
 
     @staticmethod
     def _jw_title(edge: dict, page_date: date, today: date) -> Title | None:
+        """JustWatch title. Release date = the title's ORIGINAL release date; the date it was added to
+        an OTT platform is only recorded in Type / Platform (old films added to Netflix are not new)."""
         node = edge.get("node") or {}
         is_season = node.get("__typename") == "Season"
         c = ((node.get("show") or {}).get("content") if is_season else node.get("content")) or {}
@@ -1154,26 +1460,34 @@ class IndianReleaseTrackerService:
             return None
         offer = ((edge.get("newOffer") or {}).get("package") or {}).get("clearName", "")
         ups = c.get("upcomingReleases") or []
-        d = None
+        ott = None
         if ups and ups[0].get("releaseDate"):
-            d = date.fromisoformat(ups[0]["releaseDate"][:10])
+            ott = date.fromisoformat(ups[0]["releaseDate"][:10])
             offer = offer or ((ups[0].get("package") or {}).get("clearName") or "")
         elif edge.get("newOffer"):
-            d = page_date
-        elif c.get("originalReleaseDate"):
-            d = date.fromisoformat(c["originalReleaseDate"][:10])
+            ott = page_date
+        original = date.fromisoformat(c["originalReleaseDate"][:10]) if c.get("originalReleaseDate") else None
         season = clean(((node.get("content") or {}).get("title") or "")) if is_season else ""
-        title = c.get("title", "") + (f" – {season}" if season and season.lower() != "season 1" else "")
+        new_season = bool(is_season and season and season.lower() != "season 1")
+        # a new season is dated by its OTT premiere; everything else by its original release
+        d = ott if new_season else (original or (ott if not is_season and ups else None))
+        title = c.get("title", "") + (f" – {season}" if new_season else "")
         tv = is_season or node.get("objectType") == "SHOW"
-        return Title(
-            title=title, category="TV Show" if tv else "Movie",
+        row = Title(
+            title=title, category="TV Show" if tv else "Movie", season_row=new_season,
             imdb_id=((c.get("externalIds") or {}).get("imdbId") or ""),
             genre=" / ".join(JW_GENRES.get(g["shortName"], g["shortName"]) for g in c.get("genres") or []),
             director=", ".join(x["name"] for x in (c.get("credits") or [])[:3]), network=offer,
             release_date=d.strftime("%d %b %Y") if d else "TBA (announced)", sort_date=d.isoformat() if d else None,
             status=status_for(d.isoformat() if d else None, today, "Confirmed"),
-            type_platform=f"{'Web series' if tv else 'Film'} – OTT ({offer})" if offer else "OTT",
-            source=f"JustWatch India{' – ' + offer if offer else ''}")
+            type_platform=(f"{'Web series' if tv else 'Film'} – OTT ({offer}"
+                           + (f", on OTT {ott:%d %b %Y}" if ott else "") + ")") if offer else "OTT",
+            source="JustWatch India")
+        if c.get("fullPath"):
+            row.add_url("https://www.justwatch.com" + c["fullPath"])
+        if offer:
+            row.credits = {"network": [offer]}
+        return row
 
     def _justwatch(self, start, end, today, progress) -> list[Title]:
         packages = list(JW_PACKAGES)
@@ -1217,7 +1531,7 @@ class IndianReleaseTrackerService:
         for name, url, lang, platform in LISTING_SITES:
             progress(46, f"Listing pages: {name}")
             try:
-                rows = parse_listing_page(self.http.get_text(url), name, lang, platform, today)
+                rows = parse_listing_page(self.http.get_text(url), name, lang, platform, today, url)
             except Exception as exc:
                 report.append(f"{name}: blocked ({exc.__class__.__name__})")
                 continue
@@ -1268,6 +1582,7 @@ class IndianReleaseTrackerService:
                 language = f"{lang} (original: {', '.join(orig_langs)})"
                 note.append(f"{lang} looks like a dub; original {', '.join(orig_langs)}")
             qid = (b.get("item") or "").rsplit("/", 1)[-1]
+            urls = ([f"https://www.wikidata.org/wiki/{qid}"] if qid else []) + ([f"https://www.imdb.com/title/{iid}/"] if iid else [])
             srcs = ["Wikidata " + qid] if qid else []
             if iid:
                 srcs.append("IMDb")
@@ -1280,7 +1595,7 @@ class IndianReleaseTrackerService:
                 studio=b.get("studio", ""), network=b.get("net", ""), origin=origin,
                 window=clean(r.get("window")), release_date=d.strftime("%d %b %Y") if d else "TBA",
                 sort_date=sd, status=status_for(sd, today), from_list=True, source="; ".join(srcs),
-                type_platform="Film – OTT" if cat == "Movie" else "TV series – OTT"))
+                type_platform="Film – OTT" if cat == "Movie" else "TV series – OTT", source_urls=urls))
             coverage.append({"Title": title, "IMDb ID": iid or "—", "Language": lang, "Year": str(d.year) if d else "",
                              "Origin": origin, "Window": clean(r.get("window")) or "—", "Wikidata": qid or "—",
                              "Sources found": "; ".join(srcs), "Notes": "; ".join(note)})
@@ -1299,7 +1614,7 @@ class IndianReleaseTrackerService:
             targets = sorted(targets, key=lambda t: (not t.from_list, -(int(t.sort_date.replace('-', '')) if t.sort_date else 99999999)))[:YOUTUBE_MAX_TITLES]
         if not targets:
             return
-        state = {"done": 0, "blocked": False, "api_used": 0}
+        state = {"done": 0, "blocked": False, "api_used": 0, "found": 0}
 
         def search_page(q: str) -> list[dict[str, Any]] | None:
             try:
@@ -1310,7 +1625,11 @@ class IndianReleaseTrackerService:
         def one(t: Title) -> None:
             lang = t.language.split(" (")[0].split()[0] if t.language and t.language != "Unspecified" else ""
             base = re.sub(r"\s*\(.*?\)\s*", " ", t.title).strip()
-            queries = [f"{base} {lang} {role}".replace("  ", " ") for role, _, _ in YT_ROLES]
+            year = t.sort_date[:4] if t.sort_date else ""
+            net = (t.network or "").split(",")[0].strip()
+            queries = [f"{base} {year} official trailer", f"{base} {lang} trailer {year}",
+                       f"{base} {net if t.category == 'TV Show' and net else 'teaser'} {year}"]
+            queries = [re.sub(r"\s+", " ", q).strip() for q in queries]
             results = [None if state["blocked"] else search_page(q) for q in queries]
             if any(r is None for r in results):
                 state["blocked"] = True
@@ -1319,18 +1638,22 @@ class IndianReleaseTrackerService:
                     results = [self._youtube_api_search(q, api_key) for q in queries]
                 else:
                     return
-            trailer, chans = pick_top3(t.title, results)
+            trailer, chans = pick_official_channels(t, [r or [] for r in results], today)
             if chans:
-                t.youtube_channels = chans
-            if trailer and not t.trailer_url:
+                t.youtube_channels = [u for u, _ in chans]
+                t.youtube_roles = [r for _, r in chans]
+                state["found"] += 1
+            if trailer:
                 t.trailer_url = trailer
             state["done"] += 1
             if state["done"] % 10 == 0:
-                progress(60 + int(25 * state["done"] / len(targets)), f"YouTube: {state['done']}/{len(targets)} titles")
+                progress(70 + int(18 * state["done"] / len(targets)), f"YouTube: {state['done']}/{len(targets)} titles")
 
-        progress(60, f"YouTube: top 3 channels for {len(targets)} titles")
+        progress(70, f"YouTube: official channels for {len(targets)} titles")
         with ThreadPoolExecutor(max_workers=YOUTUBE_WORKERS) as pool:
             list(pool.map(one, targets))
+        self.notes.append(f"YouTube: official (credited) channels found for {state['found']} of {len(targets)} titles; "
+                          "titles without a credited channel are left blank rather than guessed.")
         if state["blocked"]:
             self.notes.append("YouTube's results page was blocked for the server"
                               + (f"; used the YouTube Data API for {state['api_used']} titles (quota-limited)." if state["api_used"]
@@ -1354,9 +1677,11 @@ class IndianReleaseTrackerService:
         for i in items:
             cid = i["snippet"]["channelId"]
             h = handles.get(cid, "")
+            pub = i["snippet"].get("publishedAt", "")[:4]
             out.append({"id": i["id"].get("videoId", ""), "t": i["snippet"].get("title", ""),
                         "ch": f"https://www.youtube.com/{h}" if h.startswith("@") else f"https://www.youtube.com/channel/{cid}",
-                        "ver": False})
+                        "ver": False, "name": i["snippet"].get("channelTitle", ""),
+                        "pub": f"{date.today().year - int(pub)} years ago" if pub.isdigit() else ""})
         return out
 
     def _cbfc(self, titles, today, progress) -> None:
@@ -1393,6 +1718,7 @@ class IndianReleaseTrackerService:
                 if t.status in ("Confirmed", "Tentative", "Date TBA"):
                     t.status = "Certified (CBFC)"
                 t.source += f"; CBFC website, checked {today:%d %b %Y}"
+                t.add_url(action)
             if i % 10 == 0:
                 progress(88 + int(8 * i / len(targets)), f"CBFC website: {i}/{len(targets)} titles")
             time.sleep(0.3)
