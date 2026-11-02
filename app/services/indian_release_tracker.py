@@ -94,6 +94,21 @@ LANGUAGE_ALIASES = {"uttarakhandi": "Garhwali", "meitei": "Manipuri", "meiteilon
                     "bangla": "Bengali", "assamiya": "Assamese", "lushai": "Mizo", "tripuri": "Kokborok",
                     "nagpuri (sadri)": "Nagpuri", "sadri": "Nagpuri", "kumauni": "Kumaoni", "chhattisgarhi (cg)": "Chhattisgarhi"}
 INDIAN_LOWER = {x.lower() for x in INDIAN_LANGUAGES} | set(LANGUAGE_ALIASES)
+# Wikipedia keeps "List of <Language> films of <Year>" pages only for the major industries
+MAJOR_LANGUAGES = ["Hindi", "Tamil", "Telugu", "Malayalam", "Kannada", "Marathi", "Bengali", "Gujarati",
+                   "Punjabi", "Odia", "Assamese", "Bhojpuri", "Tulu"]
+REGIONAL_LANGUAGES = [l for l in INDIAN_LANGUAGES if l not in MAJOR_LANGUAGES]
+LANGUAGE_STATES = {"Urdu": "J&K, Telangana, UP", "Konkani": "Goa", "Rajasthani": "Rajasthan", "Marwari": "Rajasthan",
+                   "Haryanvi": "Haryana", "Garhwali": "Uttarakhand (Uttarakhandi)", "Kumaoni": "Uttarakhand (Uttarakhandi)", "Pahari": "Himachal Pradesh",
+                   "Kashmiri": "Jammu & Kashmir", "Dogri": "Jammu & Kashmir", "Ladakhi": "Ladakh",
+                   "Chhattisgarhi": "Chhattisgarh", "Maithili": "Bihar", "Magahi": "Bihar", "Angika": "Bihar",
+                   "Awadhi": "Uttar Pradesh", "Braj": "Uttar Pradesh", "Bundeli": "UP / Madhya Pradesh",
+                   "Malvi": "Madhya Pradesh", "Santali": "Jharkhand / Odisha / WB", "Nagpuri": "Jharkhand",
+                   "Kurukh": "Jharkhand / Chhattisgarh", "Sambalpuri": "Odisha", "Manipuri": "Manipur", "Mizo": "Mizoram",
+                   "Khasi": "Meghalaya", "Garo": "Meghalaya", "Kokborok": "Tripura", "Bodo": "Assam",
+                   "Nagamese": "Nagaland", "Nepali": "Sikkim / WB", "Lepcha": "Sikkim", "Sindhi": "Gujarat / Rajasthan",
+                   "Sanskrit": "—", "Saurashtra": "Tamil Nadu", "Badaga": "Tamil Nadu (Nilgiris)", "Kodava": "Karnataka",
+                   "Beary": "Karnataka", "Banjara": "Telangana / Karnataka", "Lambadi": "Telangana / AP"}
 
 TITLE_COLUMNS = [
     "Title Name", "IMDb ID", "Category", "Release Date", "Release Status", "Genre", "Language",
@@ -1197,7 +1212,7 @@ class IndianReleaseTrackerService:
     # -- sources -----------------------------------------------------------------------------
     def _wikipedia_films(self, languages, years, today, progress) -> list[Title]:
         out: list[Title] = []
-        jobs = [(l, y) for l in languages for y in years]
+        jobs = [(l, y) for l in languages if l in MAJOR_LANGUAGES for y in years]   # only these have year pages
         missing = []
         for i, (lang, year) in enumerate(jobs):
             progress(10 + int(30 * i / max(len(jobs), 1)), f"Wikipedia: {lang} films of {year}")
