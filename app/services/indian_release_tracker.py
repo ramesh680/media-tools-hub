@@ -1017,8 +1017,10 @@ class IndianReleaseTrackerService:
             years = list(range(start.year, end.year + 1))
             imdb_rows = self._imdb_advanced_search(start, end, include_tv, languages, today, progress)
             groups.append(imdb_rows)
-            if self.imdb_blocked or not imdb_rows:
-                groups.append(self._tmdb_discover(start, end, include_tv, languages, today, progress))
+            # IMDb's search (and the rule URL) matches a title on its FIRST release anywhere, so an Indian film
+            # that premiered at a foreign festival years earlier (e.g. Pyre: Tallinn 2024, India 30 Oct 2026)
+            # is missed. TMDB discovery by India release date always runs to close that gap.
+            groups.append(self._tmdb_discover(start, end, include_tv, languages, today, progress))
             groups.append(self._wikipedia_films(languages, years, today, progress))
             groups.append(self._imdb_lists(today, progress))
             groups.append(self._justwatch(start, end, today, progress))
@@ -1360,7 +1362,9 @@ class IndianReleaseTrackerService:
             score = 10 if item.get("qid") in types else 0
             y = item.get("y")
             if year and isinstance(y, int):
-                if abs(y - year) > 1 and not t.season_row:
+                # IMDb's year is the first release anywhere: allow a festival premiere up to 3 years earlier
+                # (the IMDb validation step then checks the India release date)
+                if not t.season_row and not (year - 3 <= y <= year + 1):
                     continue
                 score += 20 - abs(y - year) * 5
             elif year:
@@ -1516,10 +1520,11 @@ class IndianReleaseTrackerService:
         wanted = {LANG_CODES[l] for l in languages if l in LANG_CODES}
         found: list[tuple[str, int]] = []
         rule = [k for k, _ in imdb_rule_kinds()]
-        kinds = ([("movie", "primary_release_date")] if "Movie" in rule else []) + \
-                ([("tv", "first_air_date")] if include_tv and "TV Show" in rule else [])
+        kinds = ([("movie", "primary_release_date", {}),
+                  ("movie", "release_date", {"region": "IN", "with_release_type": "2|3|4|6"})] if "Movie" in rule else []) + \
+                ([("tv", "first_air_date", {})] if include_tv and "TV Show" in rule else [])
         try:
-            for kind, field in kinds:
+            for kind, field, extra in kinds:
                 chunk_start = start
                 while chunk_start <= end and len(found) < TMDB_DISCOVER_MAX:
                     chunk_end = min(end, chunk_start + timedelta(days=180))
@@ -1528,7 +1533,8 @@ class IndianReleaseTrackerService:
                         progress(10 + min(page, 30), f"TMDB India: {kind} {chunk_start:%b %Y}–{chunk_end:%b %Y}, page {page}")
                         data = self._tmdb(f"/discover/{kind}", {
                             "with_origin_country": "IN", f"{field}.gte": chunk_start.isoformat(),
-                            f"{field}.lte": chunk_end.isoformat(), "sort_by": f"{field}.asc", "page": page})
+                            f"{field}.lte": chunk_end.isoformat(), "sort_by": "primary_release_date.asc"
+                            if field == "release_date" else f"{field}.asc", "page": page, **extra})
                         pages = min(int(data.get("total_pages") or 1), 500)
                         for r in data.get("results") or []:
                             if not wanted or r.get("original_language") in wanted or r.get("original_language") not in CODE_LANGS:
@@ -1551,8 +1557,9 @@ class IndianReleaseTrackerService:
                 rows.append(t)
 
         progress(40, f"TMDB India: details for {len(found)} titles")
+        found = list(dict.fromkeys(found))
         with ThreadPoolExecutor(max_workers=TMDB_WORKERS) as pool:
-            list(pool.map(one, list(dict.fromkeys(found))))
+            list(pool.map(one, found))
         self.notes.append(f"TMDB India discovery: {len(rows)} titles kept of {len(found)} found "
                           "(kept only with an IMDb ID, a production company or a TV network).")
         return rows
