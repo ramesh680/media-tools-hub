@@ -477,6 +477,40 @@ class TmdbTokenTests(unittest.TestCase):
         self.assertEqual(calls[1][1]["api_key"], "key123")
 
 
+# Real data, 2 Nov 2026: Pyre (tt26899139) premiered in Tallinn 19 Nov 2024; India release 30 Oct 2026.
+# IMDb's search keys on the first release, so it is NOT in IMDb's Oct-2026 results; TMDB has the India date.
+TMDB_PYRE = {"id": 1374689, "title": "Pyre", "original_language": "hi", "release_date": "2026-10-30", "origin_country": ["IN"],
+             "genres": [{"name": "Drama"}], "production_companies": [{"name": "Bhagirathi Films"}, {"name": "Mashakbeen Studios"}],
+             "release_dates": {"results": [{"iso_3166_1": "IN", "release_dates": [{"release_date": "2025-03-01T00:00:00.000Z", "type": 1},
+                                                                                   {"release_date": "2026-10-30T00:00:00.000Z", "type": 3}]}]},
+             "credits": {"cast": [{"name": "Padam Singh"}, {"name": "Hira Devi"}], "crew": [{"job": "Director", "name": "Vinod Kapri"}]},
+             "external_ids": {"imdb_id": "tt26899139"}, "watch/providers": {"results": {}}}
+
+
+class FestivalPremiereTests(unittest.TestCase):
+    def test_pyre_found_even_when_imdb_search_works(self):
+        svc = IndianReleaseTrackerService(FakeHttp(), tmdb_api_key="k")       # FakeHttp: IMDb search works (Akka only)
+        seen = []
+
+        def fake_tmdb(path, params=None):
+            if path == "/discover/movie":
+                seen.append(dict(params or {}))
+                if (params or {}).get("region") == "IN":                       # India-release-date query
+                    return {"total_pages": 1, "results": [{"id": 1374689, "original_language": "hi"}]}
+                return {"total_pages": 1, "results": []}
+            if path == "/movie/1374689":
+                return TMDB_PYRE
+            return {}
+        svc._tmdb = fake_tmdb
+        snap = svc.run(mode="2", languages=["Hindi"], youtube_scope="none", check_cbfc=False, today=TODAY)
+        rows = {r["Title Name"]: r for r in snap["sections"][0]["rows"]}
+        self.assertIn("Pyre", rows)                                            # India release in the window
+        self.assertEqual((rows["Pyre"]["Release Date"], rows["Pyre"]["Language"], rows["Pyre"]["IMDb ID"]),
+                         ("30 Oct 2026", "Hindi", "tt26899139"))
+        self.assertIn("Akka", rows)                                            # IMDb rows still there
+        self.assertTrue(any(p.get("region") == "IN" and p.get("release_date.gte") for p in seen))
+
+
 class DiagnosticsTests(unittest.TestCase):
     def test_reports_every_source_without_raising(self):
         checks = IndianReleaseTrackerService(FakeHttp()).diagnose()
