@@ -20,6 +20,8 @@
   .irt-hint { margin: 8px 0 0; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
   .irt-langs { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 4px 12px; }
   #irt-rule a { word-break: break-all; }
+  .irt-sub { margin: 10px 0 6px; color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .irt-sub span { text-transform: none; letter-spacing: 0; font-weight: 500; }
   .irt-check { display: inline-flex; align-items: center; gap: 7px; font-size: 0.88rem; font-weight: 500; color: var(--ink);
                text-transform: none; letter-spacing: 0; cursor: pointer; }
   .irt-check input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
@@ -71,8 +73,14 @@
     <fieldset class="irt-block" data-hide="4">
       <legend>Languages <span class="irt-links"><a data-langs="all">all</a> · <a data-langs="none">none</a></span></legend>
       <div class="irt-langs">
-        {% for lang in languages %}
-        <label class="irt-check"><input type="checkbox" name="languages" value="{{ lang }}" checked> {{ lang }}{% if lang in ("Garhwali", "Kumaoni") %} <span style="color:var(--muted); font-size:0.78rem">(Uttarakhandi)</span>{% endif %}</label>
+        {% for lang in major_languages %}
+        <label class="irt-check"><input type="checkbox" name="languages" value="{{ lang }}" checked> {{ lang }}</label>
+        {% endfor %}
+      </div>
+      <p class="irt-sub">Regional languages &amp; dialects <span>(hover for the state · Uttarakhandi = Garhwali + Kumaoni · Rajasthani incl. Marwari)</span></p>
+      <div class="irt-langs">
+        {% for lang in regional_languages %}
+        <label class="irt-check" title="{{ language_states.get(lang, '') }}"><input type="checkbox" name="languages" value="{{ lang }}" checked> {{ lang }}</label>
         {% endfor %}
       </div>
     </fieldset>
