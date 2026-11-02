@@ -29,7 +29,8 @@ from app.services.validator_jobs import ValidatorJobManager
 from app.services.movie_trailer_feed import MovieTrailerFeedService
 from app.services.youtube_release_verifier import YouTubeReleaseVerifierService
 from app.services.indian_release_tracker import (
-    IMDB_RULE_TITLE_TYPES, IMDB_SEARCH_URL_TEMPLATE, INDIAN_LANGUAGES, IndianReleaseTrackerService)
+    IMDB_RULE_TITLE_TYPES, IMDB_SEARCH_URL_TEMPLATE, INDIAN_LANGUAGES, LANGUAGE_STATES, MAJOR_LANGUAGES,
+    REGIONAL_LANGUAGES, IndianReleaseTrackerService)
 
 
 settings = get_settings()
@@ -155,6 +156,9 @@ def indian_release_tracker(request: Request) -> HTMLResponse:
             "recent_runs": history_repository.list_recent(),
             "youtube_api_enabled": bool(settings.youtube_api_key),
             "languages": INDIAN_LANGUAGES,
+            "major_languages": MAJOR_LANGUAGES,
+            "regional_languages": REGIONAL_LANGUAGES,
+            "language_states": LANGUAGE_STATES,
             "imdb_title_types": IMDB_RULE_TITLE_TYPES,
             "imdb_rule_template": IMDB_SEARCH_URL_TEMPLATE.replace("{TITLE_TYPES}", IMDB_RULE_TITLE_TYPES),
             "today_iso": today.isoformat(),
