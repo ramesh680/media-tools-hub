@@ -129,11 +129,26 @@ def parse_date_param(value: str | None, fallback: date) -> date:
         raise ValueError(f"Invalid date '{value}'. Use YYYY-MM-DD.") from exc
 
 
+# Box Office Mojo has shown calendar group headers as "December 2, 2026" and,
+# since late 2026, as "Wed Dec 2, 2026". Accept both (and "Sept" spellings).
+_DISPLAY_DATE_FORMATS = ("%B %d, %Y", "%b %d, %Y")
+_WEEKDAY_PREFIX = re.compile(
+    r"^(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*\.?,?\s+",
+    re.IGNORECASE,
+)
+
+
 def parse_display_date(value: str) -> date | None:
-    try:
-        return datetime.strptime(clean_text(value), "%B %d, %Y").date()
-    except ValueError:
-        return None
+    text = clean_text(value)
+    text = _WEEKDAY_PREFIX.sub("", text)
+    text = re.sub(r"\bSept\b\.?", "Sep", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b([A-Za-z]{3})\.", r"\1", text)
+    for fmt in _DISPLAY_DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def calendar_url_for(month_start: date) -> str:
@@ -283,7 +298,8 @@ class BoxOfficeMojoCalendarParser(HTMLParser):
 
 def split_genres(cell: CalendarCell) -> list[str]:
     genre_text = clean_text(" ".join(cell.genre_parts or []))
-    genres = [item.strip(" ,") for item in genre_text.split() if item.strip(" ,")]
+    # Genres arrive space-separated or, in the current layout, as "A · B · C".
+    genres = [item.strip(" ,·|/") for item in re.split(r"[\s,·|]+", genre_text) if item.strip(" ,·|/")]
     return list(dict.fromkeys(genres))
 
 
@@ -300,7 +316,7 @@ def extract_cast(raw_text: str) -> str:
 def extract_release_note(cell: CalendarCell, title: str, genres: list[str]) -> str:
     genre_set = set(genres)
     lines = [clean_text(part) for part in cell.text_parts]
-    lines = [line for line in lines if line and line != "Cast, Crew, and Company Info"]
+    lines = [line for line in lines if line and line.strip("·| ") and line != "Cast, Crew, and Company Info"]
     note_parts: list[str] = []
     seen_title = False
     for line in lines:
@@ -308,7 +324,9 @@ def extract_release_note(cell: CalendarCell, title: str, genres: list[str]) -> s
             if line == title:
                 seen_title = True
             continue
-        if line in genre_set or line == "With:" or line.startswith("With:"):
+        line_tokens = [t for t in re.split(r"[\s,·|]+", line) if t]
+        is_genre_line = line in genre_set or (line_tokens and all(t in genre_set for t in line_tokens))
+        if is_genre_line or line == "With:" or line.startswith("With:"):
             if note_parts:
                 break
             continue
@@ -401,7 +419,19 @@ def get_upcoming_release_movies(start_date: date, end_date: date, refresh: bool 
 
     def load_source(source_url: str) -> tuple[str, list[dict[str, Any]]]:
         html = fetch_html(source_url, refresh=refresh)
-        return source_url, parse_calendar_html(html, source_url)
+        movies = parse_calendar_html(html, source_url)
+        if not movies and ("mojo-body-table" in html or 'id="table"' in html) and "<td" in html:
+            # The page has a release table but nothing parsed: Box Office Mojo
+            # changed its markup. Say so instead of silently reporting 0 movies.
+            warnings.append(
+                f"{source_url}: page loaded but no releases could be read "
+                "(Box Office Mojo layout may have changed)."
+            )
+        elif not movies and "mojo-body-table" not in html:
+            title_match = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+            page_title = clean_text(title_match.group(1)) if title_match else "no title"
+            warnings.append(f"{source_url}: no release table on the page (page title: {page_title}).")
+        return source_url, movies
 
     max_workers = min(6, max(1, len(source_urls)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -411,6 +441,11 @@ def get_upcoming_release_movies(start_date: date, end_date: date, refresh: bool 
             try:
                 _, movies = future.result()
                 all_movies.extend(movies)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 400:
+                    warnings.append(f"{source_url}: Box Office Mojo has no calendar page for this month yet.")
+                else:
+                    warnings.append(f"{source_url}: {exc}")
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 warnings.append(f"{source_url}: {exc}")
 
